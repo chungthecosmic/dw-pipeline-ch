@@ -1,0 +1,4 @@
+{"timestamp":"2026-01-01T17:09:33.400985","level":"info","event":"DAG bundles loaded: dags-folder","logger":"airflow.dag_processing.bundles.manager.DagBundlesManager"}
+{"timestamp":"2026-01-01T17:09:33.402178","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/etl_marketing_dag.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2026-01-01T17:09:46.008450Z","level":"info","event":"마케팅 데이터 변환","chan":"stdout","logger":"task"}
+{"timestamp":"2026-01-01T17:09:46.009722","level":"info","event":"Done. Returned value was: None","logger":"airflow.task.operators.airflow.providers.standard.operators.python.PythonOperator"}
