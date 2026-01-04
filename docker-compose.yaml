@@ -58,8 +58,8 @@ x-airflow-common:
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
     AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-    AIRFLOW__CORE__FERNET_KEY: 'Y8Uqqd4EoVS9iYb7Pqzq1syrCc3kNdyZk4SeLudPt7A='
-    AIRFLOW__API_AUTH__JWT_SECRET: '81e5da0a91c3fa75b99747cfcedb172b1951ed2c6c126384782ec441be1b3d03'
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET}
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
@@ -70,7 +70,7 @@ x-airflow-common:
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
     # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option ONLY for a quick checks
     # for other purpose (development, test and especially production usage) build/extend Airflow image.
-    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
+    # _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS}
     # The following line can be used to set a custom config file, stored in the local config folder
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
     AIRFLOW__LOGGING__WORKER_LOG_SERVER_HOST: "localhost"
@@ -193,6 +193,8 @@ services:
       # Required to handle warm shutdown of the celery workers properly
       # See https://airflow.apache.org/docs/docker-stack/entrypoint.html#signal-propagation
       DUMB_INIT_SETSID: "0"
+    mem_limit: 1g
+    cpus: 1.0
     restart: always
     depends_on:
       <<: *airflow-common-depends-on
@@ -323,6 +325,65 @@ services:
     depends_on:
       <<: *airflow-common-depends-on
 
+  spark-master:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    image: apache/spark:3.5.0
+    container_name: spark-master
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    environment:
+      - GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=${GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY}
+    command:
+      - org.apache.spark.deploy.master.Master
+    ports:
+      - "8088:8080"
+      - "7077:7077"
+    volumes:
+      - ./spark:/opt/spark-apps
+
+  spark-worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    image: apache/spark:3.5.0
+    container_name: spark-worker-1
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    environment:
+      - GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=${GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY}
+      - SPARK_WORKER_MEMORY=2g
+      - SPARK_WORKER_CORES=1
+    command:
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+    depends_on:
+      - spark-master
+    ports:
+      - "8089:8081"
+    volumes:
+      - ./spark:/opt/spark-apps
+
+  spark-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    image: apache/spark:3.5.0
+    container_name: spark-worker-2
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    environment:
+      - GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=${GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY}
+      - SPARK_WORKER_MEMORY=2g
+      - SPARK_WORKER_CORES=1
+    command:
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+    depends_on:
+      - spark-master
+    ports:
+      - "8090:8081"
+    volumes:
+      - ./spark:/opt/spark-apps
+  
   # You can enable flower by adding "--profile flower" option e.g. docker-compose --profile flower up
   # or by explicitly targeted on the command line e.g. docker-compose up flower.
   # See: https://docs.docker.com/compose/profiles/
