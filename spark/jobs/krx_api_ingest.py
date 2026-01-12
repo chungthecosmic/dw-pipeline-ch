@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 service_key = os.environ.get("GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY")
 
-basDt = (datetime.today() - timedelta(days=6)).strftime('%Y%m%d') #어제 날짜로 수행
+basDt = (datetime.today() - timedelta(days=2)).strftime('%Y%m%d') #어제 날짜로 수행
 print(basDt)
 params = {
     "serviceKey" : service_key,
