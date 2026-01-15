@@ -1,206 +1,305 @@
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
+# ================================================================================
+# DW Pipeline Docker Compose 설정
+# ================================================================================
 #
-#   http://www.apache.org/licenses/LICENSE-2.0
+# 이 프로젝트는 데이터 웨어하우스 파이프라인으로, 다음 컴포넌트들로 구성됩니다:
 #
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an
-# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-# KIND, either express or implied.  See the License for the
-# specific language governing permissions and limitations
-# under the License.
+# [데이터 수집 Layer]
+#   - Spark (Master + Workers): 분산 데이터 처리 및 외부 API 데이터 수집
+#     * 국내 주식 (KRX API)
+#     * 해외 주식 (Alpha Vantage API)
+#     * 가상자산 (CoinGecko API)
 #
+# [오케스트레이션 Layer]
+#   - Airflow: 워크플로우 스케줄링 및 모니터링 (CeleryExecutor)
+#   - Redis: Celery 메시지 브로커
+#   - PostgreSQL: Airflow 메타데이터 저장소
+#
+# [스토리지 Layer]
+#   - MinIO: S3 호환 객체 스토리지
+#   - Hive Metastore: 테이블 메타데이터 카탈로그 (PostgreSQL 백엔드)
+#
+# [쿼리 & 변환 Layer]
+#   - Trino: 분산 SQL 쿼리 엔진
+#   - dbt: 데이터 변환 도구
+#
+# [필수 환경변수] (.env 파일에 설정)
+#   - AIRFLOW_UID: Airflow 컨테이너 사용자 ID (기본값: 50000)
+#   - AIRFLOW__CORE__FERNET_KEY: Airflow 암호화 키
+#   - AIRFLOW__API_AUTH__JWT_SECRET: Airflow API JWT 비밀키
+#   - GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY: 금융위원회 주식시세 API 키
+#   - ALPHA_VANTAGE_API_KEY: Alpha Vantage API 키
+#
+# [주요 접근 포트]
+#   - Airflow UI:        http://localhost:8080 (user: airflow, pass: airflow)
+#   - Spark Master UI:   http://localhost:8088
+#   - Trino UI:          http://localhost:8081
+#   - MinIO Console:     http://localhost:9001 (user: minio, pass: minio123)
+#   - Flower (optional): http://localhost:5555 (Celery 모니터링)
+#
+# [주의사항]
+#   - 로컬 개발 환경용 설정입니다. 프로덕션 사용 금지!
+#   - 최소 요구사항: 메모리 4GB, CPU 2코어, 디스크 10GB
+#
+# ================================================================================
 
-# Basic Airflow cluster configuration for CeleryExecutor with Redis and PostgreSQL.
-#
-# WARNING: This configuration is for local development. Do not use it in a production deployment.
-#
-# This configuration supports basic configuration using environment variables or an .env file
-# The following variables are supported:
-#
-# AIRFLOW_IMAGE_NAME           - Docker image name used to run Airflow.
-#                                Default: apache/airflow:3.0.4
-# AIRFLOW_UID                  - User ID in Airflow containers
-#                                Default: 50000
-# AIRFLOW_PROJ_DIR             - Base path to which all the files will be volumed.
-#                                Default: .
-# Those configurations are useful mostly in case of standalone testing/running Airflow in test/try-out mode
-#
-# _AIRFLOW_WWW_USER_USERNAME   - Username for the administrator account (if requested).
-#                                Default: airflow
-# _AIRFLOW_WWW_USER_PASSWORD   - Password for the administrator account (if requested).
-#                                Default: airflow
-# _PIP_ADDITIONAL_REQUIREMENTS - Additional PIP requirements to add when starting all containers.
-#                                Use this option ONLY for quick checks. Installing requirements at container
-#                                startup is done EVERY TIME the service is started.
-#                                A better way is to build a custom image or extend the official image
-#                                as described in https://airflow.apache.org/docs/docker-stack/build.html.
-#                                Default: ''
-#
-# Feel free to modify this file to suit your needs.
 ---
+# ================================================================================
+# Airflow 공통 설정 템플릿
+# ================================================================================
+# YAML 앵커(&)를 사용하여 여러 Airflow 컨테이너가 공유하는 설정을 정의합니다.
+# 이 설정은 <<: *airflow-common 문법으로 각 서비스에서 재사용됩니다.
+# ================================================================================
+
 x-airflow-common:
   &airflow-common
-  # In order to add custom dependencies or upgrade provider distributions you can use your extended image.
-  # Comment the image line, place your Dockerfile in the directory where you placed the docker-compose.yaml
-  # and uncomment the "build" line below, Then run `docker-compose build` to build the images.
+  # Airflow 이미지 설정
+  # 환경변수 AIRFLOW_IMAGE_NAME으로 오버라이드 가능 (기본: apache/airflow:3.0.4)
   image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.0.4}
-  # build: .
+  # build: .  # 커스텀 이미지를 빌드하려면 이 줄의 주석을 제거하고 위 줄을 주석 처리
+
+  # 환경변수 설정 (모든 Airflow 컨테이너에 공통 적용)
   environment:
     &airflow-common-env
+    # ============ Airflow 핵심 설정 ============
+    # CeleryExecutor: 분산 태스크 실행을 위한 Celery 사용
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+
+    # Flask-AppBuilder 기반 인증 관리자 사용
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+
+    # ============ 데이터베이스 연결 설정 ============
+    # Airflow 메타데이터를 저장할 PostgreSQL 연결 정보
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+
+    # Celery 태스크 결과를 저장할 백엔드 (PostgreSQL 사용)
     AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+
+    # Celery 메시지 브로커 (Redis 사용, 워커 간 태스크 큐잉)
     AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+
+    # ============ 보안 설정 ============
+    # Fernet 키: Airflow의 민감한 정보(Connection, Variable) 암호화에 사용
+    # .env 파일에서 로드 (생성: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+
+    # JWT 비밀키: Airflow API 인증에 사용
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET}
+
+    # ============ DAG 동작 설정 ============
+    # 새로 추가된 DAG는 기본적으로 일시정지 상태로 생성
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+
+    # Airflow 예제 DAG 로드 비활성화 (프로덕션에서는 false 권장)
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+
+    # Execution API 서버 URL (Airflow 3.0+에서 DAG 실행 담당)
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
-    # yamllint disable rule:line-length
-    # Use simple http server on scheduler for health checks
-    # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
-    # yamllint enable rule:line-length
+
+    # ============ 헬스체크 설정 ============
+    # Scheduler 헬스체크 엔드포인트 활성화
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
-    # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option ONLY for a quick checks
-    # for other purpose (development, test and especially production usage) build/extend Airflow image.
+
+    # ============ 추가 Python 패키지 ============
+    # 경고: 컨테이너 시작 시마다 패키지를 설치하므로 성능 저하 가능
+    # 프로덕션에서는 커스텀 이미지 빌드 권장
     _PIP_ADDITIONAL_REQUIREMENTS: 'dbt-trino==1.8.0'
-    # The following line can be used to set a custom config file, stored in the local config folder
+
+    # ============ 설정 파일 경로 ============
+    # 커스텀 airflow.cfg 파일 경로
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+
+    # Worker 로그 서버 호스트
     AIRFLOW__LOGGING__WORKER_LOG_SERVER_HOST: "localhost"
+
+  # 볼륨 마운트 (로컬 디렉토리 <-> 컨테이너 디렉토리)
   volumes:
-    - ./airflow/dags:/opt/airflow/dags
-    - ./airflow/logs:/opt/airflow/logs
-    - ./airflow/config:/opt/airflow/config
-    - ./airflow/plugins:/opt/airflow/plugins
-    - ./dbt:/opt/dbt
+    - ./airflow/dags:/opt/airflow/dags          # DAG 파일들
+    - ./airflow/logs:/opt/airflow/logs          # 실행 로그
+    - ./airflow/config:/opt/airflow/config      # 설정 파일
+    - ./airflow/plugins:/opt/airflow/plugins    # 커스텀 플러그인
+    - ./dbt:/opt/dbt                            # dbt 프로젝트
+
+  # 컨테이너 실행 사용자 (UID:GID)
+  # 환경변수 AIRFLOW_UID로 오버라이드 가능 (기본: 50000:0)
   user: "${AIRFLOW_UID:-50000}:0"
+
+  # 의존성 설정 (공통 의존성)
   depends_on:
     &airflow-common-depends-on
     redis:
-      condition: service_healthy
+      condition: service_healthy    # Redis가 healthy 상태일 때까지 대기
     postgres:
-      condition: service_healthy
+      condition: service_healthy    # PostgreSQL이 healthy 상태일 때까지 대기
+
+# ================================================================================
+# 서비스 정의
+# ================================================================================
 
 services:
-  # -------------------------
-  # minio(S3 대체)
-  # -------------------------
+  # ==============================================================================
+  # [1] 스토리지 Layer - MinIO
+  # ==============================================================================
+  # MinIO는 S3 호환 객체 스토리지입니다.
+  # Hive Metastore와 연동하여 데이터 레이크 스토리지 역할을 합니다.
+  #
+  # 접근 정보:
+  #   - S3 API:  http://localhost:9000
+  #   - Console: http://localhost:9001
+  #   - User:    minio
+  #   - Pass:    minio123
+  # ==============================================================================
   minio:
     image: minio/minio
     container_name: minio
+    # MinIO 서버 시작 명령어
+    # /data: 데이터 저장 경로
+    # --console-address ":9001": 웹 콘솔 포트 지정
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio123
+      MINIO_ROOT_USER: minio          # 관리자 사용자명
+      MINIO_ROOT_PASSWORD: minio123   # 관리자 비밀번호
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9000:9000"  # S3 API 포트
+      - "9001:9001"  # 웹 콘솔 포트
     volumes:
-      - ./minio:/data
+      - ./minio:/data  # 로컬 ./minio 디렉토리에 데이터 영구 저장
 
-  # -------------------------
-  # Spark (master + 2 workers)
-  # -------------------------
+  # ==============================================================================
+  # [2] 데이터 처리 Layer - Apache Spark
+  # ==============================================================================
+  # Spark는 분산 데이터 처리 엔진으로, 외부 API에서 데이터를 수집합니다.
+  # 클러스터 구성: Master 1대 + Worker 2대
+  #
+  # 데이터 수집 소스:
+  #   - 국내 주식: 금융위원회 주식시세정보 API (GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY)
+  #   - 해외 주식: Alpha Vantage API (ALPHA_VANTAGE_API_KEY)
+  #   - 가상자산: CoinGecko API (인증 불필요)
+  #
+  # 출력 데이터:
+  #   - 형식: Parquet
+  #   - 위치: ./spark/output/{krx|foreign_stock|crypto}/YYYYMMDD/
+  # ==============================================================================
+
+  # ---------- Spark Master ----------
+  # Spark 클러스터의 마스터 노드입니다.
+  # Worker 등록, 리소스 관리, Job 스케줄링을 담당합니다.
   spark-master:
     build:
       context: .
       dockerfile: Dockerfile.spark
-    image: apache/spark:3.5.0
+    image: spark-custom:3.5.0
     container_name: spark-master
     entrypoint: ["/opt/spark/bin/spark-class"]
-    environment:
-      - GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=${GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY}
     command:
       - org.apache.spark.deploy.master.Master
+    environment:
+      # 데이터 수집에 필요한 API 키들
+      - GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=${GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY}
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
     ports:
-      - "8088:8080"
-      - "7077:7077"
+      - "8088:8080"  # Spark Master Web UI (http://localhost:8088)
+      - "7077:7077"  # Spark Master 통신 포트 (Airflow SparkSubmitOperator가 이 포트로 연결)
     volumes:
+      # ./spark 디렉토리를 컨테이너의 /opt/spark-apps에 마운트
+      # - jobs/: Spark job 스크립트 (.py 파일들)
+      # - output/: 수집된 데이터 저장 위치 (Parquet 형식)
       - ./spark:/opt/spark-apps
 
+  # ---------- Spark Worker 1 ----------
+  # 실제 Spark job을 실행하는 워커 노드입니다.
+  # 리소스: 메모리 2GB, CPU 1코어
   spark-worker-1:
     build:
       context: .
       dockerfile: Dockerfile.spark
-    image: apache/spark:3.5.0
+    image: spark-custom:3.5.0
     container_name: spark-worker-1
     entrypoint: ["/opt/spark/bin/spark-class"]
-    environment:
-      - GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=${GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY}
-      - SPARK_WORKER_MEMORY=2g
-      - SPARK_WORKER_CORES=1
     command:
       - org.apache.spark.deploy.worker.Worker
-      - spark://spark-master:7077
+      - spark://spark-master:7077  # Master에 연결
+    environment:
+      - GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=${GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY}
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
+      - SPARK_WORKER_MEMORY=2g     # 워커 메모리 2GB
+      - SPARK_WORKER_CORES=1       # 워커 CPU 1코어
     depends_on:
       - spark-master
     ports:
-      - "8089:8081"
+      - "8089:8081"  # Worker 1 Web UI (http://localhost:8089)
     volumes:
       - ./spark:/opt/spark-apps
 
+  # ---------- Spark Worker 2 ----------
+  # 두 번째 워커 노드 (Worker 1과 동일한 설정)
   spark-worker-2:
     build:
       context: .
       dockerfile: Dockerfile.spark
-    image: apache/spark:3.5.0
+    image: spark-custom:3.5.0
     container_name: spark-worker-2
     entrypoint: ["/opt/spark/bin/spark-class"]
-    environment:
-      - GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=${GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY}
-      - SPARK_WORKER_MEMORY=2g
-      - SPARK_WORKER_CORES=1
     command:
       - org.apache.spark.deploy.worker.Worker
-      - spark://spark-master:7077
+      - spark://spark-master:7077  # Master에 연결
+    environment:
+      - GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=${GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY}
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
+      - SPARK_WORKER_MEMORY=2g     # 워커 메모리 2GB
+      - SPARK_WORKER_CORES=1       # 워커 CPU 1코어
     depends_on:
       - spark-master
     ports:
-      - "8090:8081"
+      - "8090:8081"  # Worker 2 Web UI (http://localhost:8090)
     volumes:
       - ./spark:/opt/spark-apps
 
-  # -------------------------
-  # Hive Metastore DB
-  # -------------------------
+  # ==============================================================================
+  # [3] 메타데이터 카탈로그 Layer - Hive Metastore
+  # ==============================================================================
+  # Hive Metastore는 테이블 메타데이터(스키마, 위치, 파티션 등)를 관리합니다.
+  # Spark와 Trino가 공유하는 중앙 카탈로그 역할을 합니다.
+  #
+  # 아키텍처:
+  #   Spark/Trino → Hive Metastore → PostgreSQL (메타데이터 저장)
+  #                               → MinIO (실제 데이터 저장)
+  # ==============================================================================
+
+  # ---------- Hive Metastore Database ----------
+  # Hive Metastore의 메타데이터를 저장하는 PostgreSQL 데이터베이스
   hive-metastore-db:
     image: postgres:15
     container_name: hive-metastore-db
     environment:
-      POSTGRES_DB: metastore
-      POSTGRES_USER: hive
-      POSTGRES_PASSWORD: hive
+      POSTGRES_DB: metastore        # 데이터베이스 이름
+      POSTGRES_USER: hive           # 사용자명
+      POSTGRES_PASSWORD: hive       # 비밀번호
     volumes:
+      # 메타데이터 영구 저장 (로컬 ./hive-metastore-db 디렉토리)
       - ./hive-metastore-db:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "hive"]
       interval: 10s
       retries: 5
 
-  # -------------------------
-  # Hive Metastore
-  # -------------------------
+  # ---------- Hive Metastore Service ----------
+  # Thrift 프로토콜로 메타데이터 서비스를 제공합니다.
   hive-metastore:
     image: apache/hive:4.0.0
     container_name: hive-metastore
     environment:
       DB_DRIVER: postgres
       SERVICE_NAME: metastore
+      # PostgreSQL 연결 정보 (JDBC 옵션)
       SERVICE_OPTS: "-Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-metastore-db:5432/metastore -Djavax.jdo.option.ConnectionUserName=hive -Djavax.jdo.option.ConnectionPassword=hive"
-      # S3 (MinIO) 설정
-      AWS_ACCESS_KEY_ID: minio
-      AWS_SECRET_ACCESS_KEY: minio123
-      S3_ENDPOINT: http://minio:9000
-      S3_PATH_STYLE_ACCESS: "true"
+      # MinIO (S3) 연동 설정
+      AWS_ACCESS_KEY_ID: minio           # MinIO 액세스 키
+      AWS_SECRET_ACCESS_KEY: minio123    # MinIO 시크릿 키
+      S3_ENDPOINT: http://minio:9000     # MinIO 엔드포인트
+      S3_PATH_STYLE_ACCESS: "true"       # Path-style 액세스 활성화 (버킷명이 경로에 포함)
     ports:
-      - "9083:9083"
+      - "9083:9083"  # Thrift 서비스 포트 (Spark/Trino가 이 포트로 연결)
     depends_on:
       hive-metastore-db:
         condition: service_healthy
@@ -213,43 +312,76 @@ services:
       retries: 5
       start_period: 30s
 
-  # -------------------------
-  # Trino
-  # -------------------------
+  # ==============================================================================
+  # [4] 쿼리 엔진 Layer - Trino
+  # ==============================================================================
+  # Trino는 분산 SQL 쿼리 엔진입니다.
+  # Hive Metastore를 통해 데이터 레이크의 데이터를 SQL로 조회할 수 있습니다.
+  #
+  # 접근: http://localhost:8081
+  # ==============================================================================
+
   trino:
     image: trinodb/trino:latest
     container_name: trino
     ports:
-      - "8080:8080"
+      - "8081:8080"  # Trino Web UI & JDBC 포트 (호스트:8081 → 컨테이너:8080)
     volumes:
+      # Trino 카탈로그 설정 파일 (Hive Metastore 연동 설정 포함)
       - ./trino/catalog:/etc/trino/catalog
+      # JVM 설정 파일 (힙 메모리 등)
       - ./trino/jvm.config:/etc/trino/jvm.config
     depends_on:
       - hive-metastore
 
-  # -------------------------
-  # dbt
-  # -------------------------
+  # ==============================================================================
+  # [5] 데이터 변환 Layer - dbt
+  # ==============================================================================
+  # dbt (data build tool)는 SQL 기반 데이터 변환 도구입니다.
+  # Trino를 백엔드로 사용하여 ELT 파이프라인의 Transform 단계를 담당합니다.
+  # ==============================================================================
+
   dbt:
     image: ghcr.io/dbt-labs/dbt-trino:latest
     container_name: dbt
     volumes:
-      - ./dbt:/usr/app
+      - ./dbt:/usr/app  # dbt 프로젝트 디렉토리
     working_dir: /usr/app
     depends_on:
       - trino
 
+  # ==============================================================================
+  # [6] 오케스트레이션 Layer - Airflow
+  # ==============================================================================
+  # Airflow는 워크플로우 오케스트레이션 플랫폼입니다.
+  # CeleryExecutor를 사용하여 분산 태스크 실행을 지원합니다.
+  #
+  # 아키텍처:
+  #   - API Server: REST API 및 Web UI 제공
+  #   - Scheduler: DAG 스케줄링 담당
+  #   - DAG Processor: DAG 파일 파싱 및 직렬화
+  #   - Worker: 실제 태스크 실행 (Celery)
+  #   - Triggerer: Deferrable Operator 지원
+  #   - Redis: Celery 메시지 브로커
+  #   - PostgreSQL: 메타데이터 저장소
+  #
+  # 접근 정보:
+  #   - Web UI: http://localhost:8080
+  #   - User:   airflow (기본값, _AIRFLOW_WWW_USER_USERNAME으로 변경 가능)
+  #   - Pass:   airflow (기본값, _AIRFLOW_WWW_USER_PASSWORD로 변경 가능)
+  # ==============================================================================
 
-  # -------------------------
-  # Airflow
-  # -------------------------
+  # ---------- PostgreSQL (Airflow 메타데이터 저장소) ----------
+  # Airflow의 모든 메타데이터(DAG, Task, Connection, Variable 등)를 저장합니다.
   postgres:
     image: postgres:13
+    container_name: airflow-postgres
     environment:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
       POSTGRES_DB: airflow
     volumes:
+      # Named volume 사용 (Docker가 관리, 영구 저장)
       - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
@@ -258,12 +390,15 @@ services:
       start_period: 5s
     restart: always
 
+  # ---------- Redis (Celery 메시지 브로커) ----------
+  # Celery Worker 간 태스크 큐잉을 위한 메시지 브로커
   redis:
-    # Redis is limited to 7.2-bookworm due to licencing change
-    # https://redis.io/blog/redis-adopts-dual-source-available-licensing/
+    # Redis 7.2 사용 (라이선스 변경으로 인해 7.2로 제한)
+    # 참고: https://redis.io/blog/redis-adopts-dual-source-available-licensing/
     image: redis:7.2-bookworm
+    container_name: airflow-redis
     expose:
-      - 6379
+      - 6379  # 포트를 외부에 노출하지 않고 내부 네트워크에만 공개
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -272,16 +407,21 @@ services:
       start_period: 30s
     restart: always
 
+  # ---------- Airflow API Server ----------
+  # REST API 및 Web UI를 제공하는 서버
+  # Airflow 3.0+에서는 API Server와 Webserver가 분리됨
   airflow-apiserver:
     <<: *airflow-common
     command: api-server
     ports:
-      - "8080:8080"
+      - "8080:8080"  # Web UI 접속 포트 (http://localhost:8080)
     volumes:
+      # DAG, 로그, 플러그인만 마운트 (dbt는 불필요)
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
     healthcheck:
+      # API 버전 엔드포인트로 헬스체크
       test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
       interval: 30s
       timeout: 10s
@@ -293,6 +433,8 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # ---------- Airflow Scheduler ----------
+  # DAG를 스케줄링하고 태스크를 Celery 큐에 전송하는 스케줄러
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
@@ -301,6 +443,7 @@ services:
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
     healthcheck:
+      # Scheduler 헬스체크 엔드포인트 (포트 8974)
       test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
       interval: 30s
       timeout: 10s
@@ -312,6 +455,9 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # ---------- Airflow DAG Processor ----------
+  # DAG 파일을 파싱하고 직렬화하는 프로세서
+  # Scheduler의 부하를 줄이기 위해 Airflow 2.7+에서 분리됨
   airflow-dag-processor:
     <<: *airflow-common
     command: dag-processor
@@ -320,6 +466,7 @@ services:
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
     healthcheck:
+      # DAG Processor Job 상태 확인
       test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
       interval: 30s
       timeout: 10s
@@ -331,11 +478,14 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # ---------- Airflow Celery Worker ----------
+  # 실제 태스크를 실행하는 워커
+  # Celery 큐에서 태스크를 가져와 실행하고 결과를 저장합니다.
   airflow-worker:
     <<: *airflow-common
     command: celery worker
     healthcheck:
-      # yamllint disable rule:line-length
+      # Celery Worker 상태 확인 (ping 명령)
       test:
         - "CMD-SHELL"
         - 'celery --app airflow.providers.celery.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}" || celery --app airflow.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}"'
@@ -345,9 +495,10 @@ services:
       start_period: 30s
     environment:
       <<: *airflow-common-env
-      # Required to handle warm shutdown of the celery workers properly
-      # See https://airflow.apache.org/docs/docker-stack/entrypoint.html#signal-propagation
+      # Celery Worker의 Graceful Shutdown을 위한 설정
+      # 참고: https://airflow.apache.org/docs/docker-stack/entrypoint.html#signal-propagation
       DUMB_INIT_SETSID: "0"
+    # 리소스 제한 (메모리 1GB, CPU 1코어)
     mem_limit: 1g
     cpus: 1.0
     restart: always
@@ -358,10 +509,14 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # ---------- Airflow Triggerer ----------
+  # Deferrable Operator를 지원하는 트리거러
+  # 비동기 태스크(센서 등)를 효율적으로 처리합니다.
   airflow-triggerer:
     <<: *airflow-common
     command: triggerer
     healthcheck:
+      # Triggerer Job 상태 확인
       test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
       interval: 30s
       timeout: 10s
@@ -373,13 +528,19 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # ---------- Airflow Init ----------
+  # 초기 설정을 수행하는 일회성 컨테이너
+  # - DB 마이그레이션 (airflow db migrate)
+  # - 관리자 계정 생성
+  # - 디렉토리 및 권한 설정
+  # - 시스템 리소스 체크
   airflow-init:
     <<: *airflow-common
     entrypoint: /bin/bash
-    # yamllint disable rule:line-length
     command:
       - -c
       - |
+        # ============ 사용자 ID 체크 ============
         if [[ -z "${AIRFLOW_UID}" ]]; then
           echo
           echo -e "\033[1;33mWARNING!!!: AIRFLOW_UID not set!\e[0m"
@@ -390,11 +551,15 @@ services:
           echo
           export AIRFLOW_UID=$$(id -u)
         fi
+
+        # ============ 시스템 리소스 체크 ============
         one_meg=1048576
         mem_available=$$(($$(getconf _PHYS_PAGES) * $$(getconf PAGE_SIZE) / one_meg))
         cpus_available=$$(grep -cE 'cpu[0-9]+' /proc/stat)
         disk_available=$$(df / | tail -1 | awk '{print $$4}')
         warning_resources="false"
+
+        # 메모리 체크 (최소 4GB)
         if (( mem_available < 4000 )) ; then
           echo
           echo -e "\033[1;33mWARNING!!!: Not enough memory available for Docker.\e[0m"
@@ -402,6 +567,8 @@ services:
           echo
           warning_resources="true"
         fi
+
+        # CPU 체크 (최소 2코어)
         if (( cpus_available < 2 )); then
           echo
           echo -e "\033[1;33mWARNING!!!: Not enough CPUS available for Docker.\e[0m"
@@ -409,6 +576,8 @@ services:
           echo
           warning_resources="true"
         fi
+
+        # 디스크 체크 (최소 10GB)
         if (( disk_available < one_meg * 10 )); then
           echo
           echo -e "\033[1;33mWARNING!!!: Not enough Disk space available for Docker.\e[0m"
@@ -416,6 +585,7 @@ services:
           echo
           warning_resources="true"
         fi
+
         if [[ $${warning_resources} == "true" ]]; then
           echo
           echo -e "\033[1;33mWARNING!!!: You have not enough resources to run Airflow (see above)!\e[0m"
@@ -423,48 +593,68 @@ services:
           echo "   https://airflow.apache.org/docs/apache-airflow/stable/howto/docker-compose/index.html#before-you-begin"
           echo
         fi
+
+        # ============ 디렉토리 생성 ============
         echo
         echo "Creating missing opt dirs if missing:"
         echo
         mkdir -v -p /opt/airflow/{logs,dags,plugins,config}
+
+        # ============ Airflow 버전 확인 ============
         echo
         echo "Airflow version:"
         /entrypoint airflow version
+
+        # ============ 파일 목록 확인 ============
         echo
         echo "Files in shared volumes:"
         echo
         ls -la /opt/airflow/{logs,dags,plugins,config}
+
+        # ============ 설정 파일 생성 ============
         echo
         echo "Running airflow config list to create default config file if missing."
         echo
         /entrypoint airflow config list >/dev/null
+
         echo
         echo "Files in shared volumes:"
         echo
         ls -la /opt/airflow/{logs,dags,plugins,config}
+
+        # ============ 권한 설정 ============
         echo
         echo "Change ownership of files in /opt/airflow to ${AIRFLOW_UID}:0"
         echo
         chown -R "${AIRFLOW_UID}:0" /opt/airflow/
+
         echo
         echo "Change ownership of files in shared volumes to ${AIRFLOW_UID}:0"
         echo
         chown -v -R "${AIRFLOW_UID}:0" /opt/airflow/{logs,dags,plugins,config}
+
         echo
         echo "Files in shared volumes:"
         echo
         ls -la /opt/airflow/{logs,dags,plugins,config}
 
-    # yamllint enable rule:line-length
     environment:
       <<: *airflow-common-env
+      # DB 마이그레이션 실행
       _AIRFLOW_DB_MIGRATE: 'true'
+      # 관리자 계정 생성
       _AIRFLOW_WWW_USER_CREATE: 'true'
+      # 관리자 계정 정보 (환경변수로 오버라이드 가능)
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+      # Init 컨테이너는 추가 패키지 설치 불필요
       _PIP_ADDITIONAL_REQUIREMENTS: ''
+    # Root 권한으로 실행 (권한 설정을 위해)
     user: "0:0"
 
+  # ---------- Airflow CLI (디버그용) ----------
+  # Airflow CLI 명령을 실행할 수 있는 컨테이너
+  # 프로필이 debug일 때만 실행됨 (docker-compose --profile debug up)
   airflow-cli:
     <<: *airflow-common
     profiles:
@@ -472,7 +662,8 @@ services:
     environment:
       <<: *airflow-common-env
       CONNECTION_CHECK_MAX_COUNT: "0"
-    # Workaround for entrypoint issue. See: https://github.com/apache/airflow/issues/16252
+    # Entrypoint 이슈 우회 방법
+    # 참고: https://github.com/apache/airflow/issues/16252
     command:
       - bash
       - -c
@@ -480,16 +671,18 @@ services:
     depends_on:
       <<: *airflow-common-depends-on
 
-  # You can enable flower by adding "--profile flower" option e.g. docker-compose --profile flower up
-  # or by explicitly targeted on the command line e.g. docker-compose up flower.
-  # See: https://docs.docker.com/compose/profiles/
+  # ---------- Flower (Celery 모니터링) ----------
+  # Celery Worker를 모니터링하는 웹 UI
+  # 프로필이 flower일 때만 실행됨 (docker-compose --profile flower up)
+  #
+  # 접근: http://localhost:5555
   flower:
     <<: *airflow-common
     command: celery flower
     profiles:
       - flower
     ports:
-      - "5555:5555"
+      - "5555:5555"  # Flower Web UI
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:5555/"]
       interval: 30s
@@ -502,5 +695,13 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+# ================================================================================
+# 볼륨 정의
+# ================================================================================
+# Named volume은 Docker가 관리하는 영구 저장소입니다.
+# 컨테이너를 삭제해도 데이터가 유지됩니다.
+# ================================================================================
+
 volumes:
+  # Airflow 메타데이터 저장용 PostgreSQL 볼륨
   postgres-db-volume:
