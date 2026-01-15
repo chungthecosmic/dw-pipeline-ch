@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, lit, current_timestamp
@@ -15,9 +16,17 @@ CRYPTO_IDS = [
     'aptos', 'sui', 'sei-network', 'the-open-network'
 ]
 
-# 현재 날짜
-current_date = datetime.today().strftime('%Y-%m-%d')
-print(f"수집 날짜: {current_date}")
+# 날짜 파라미터 받기: python crypto_ingest.py 20260113
+# 파라미터가 없으면 기본값 (오늘 날짜) 사용
+if len(sys.argv) > 1:
+    target_date = sys.argv[1]  # YYYYMMDD 형식
+    # YYYY-MM-DD 형식으로 변환 (데이터 컬럼용)
+    current_date = f"{target_date[:4]}-{target_date[4:6]}-{target_date[6:]}"
+else:
+    target_date = datetime.today().strftime('%Y%m%d')
+    current_date = datetime.today().strftime('%Y-%m-%d')
+
+print(f"수집 날짜: {current_date} (저장 경로: {target_date})")
 
 # Spark 세션 생성
 spark = SparkSession.builder \
@@ -118,8 +127,7 @@ total_size_mb = (num_rows * row_size_bytes) / (1024 * 1024)
 num_partitions = max(1, int(total_size_mb / target_size_mb))
 
 # 출력 경로
-output_date = datetime.today().strftime('%Y%m%d')
-output_path = f'/opt/spark-apps/output/crypto/{output_date}'
+output_path = f'/opt/spark-apps/output/crypto/{target_date}'
 
 print(f"\n데이터 저장 중: {output_path}")
 df.repartition(num_partitions).write.mode("overwrite").parquet(output_path)

@@ -1,0 +1,31 @@
+dw_pipeline:
+  outputs:
+    dev:
+      type: trino
+      method: none
+      user: trino
+      host: trino
+      port: 8080
+      database: hive
+      schema: default
+      threads: 4
+      http_scheme: http
+      session_properties:
+        query_max_run_time: 5m
+        exchange_compression: true
+
+    prod:
+      type: trino
+      method: none
+      user: trino
+      host: trino
+      port: 8080
+      database: hive
+      schema: default
+      threads: 8
+      http_scheme: http
+      session_properties:
+        query_max_run_time: 10m
+        exchange_compression: true
+
+  target: dev

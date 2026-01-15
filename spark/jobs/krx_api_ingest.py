@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
@@ -6,8 +7,14 @@ from datetime import datetime, timedelta
 
 service_key = os.environ.get("GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY")
 
-basDt = (datetime.today() - timedelta(days=2)).strftime('%Y%m%d') #어제 날짜로 수행
-print(basDt)
+# 날짜 파라미터 받기: python krx_api_ingest.py 20260113
+# 파라미터가 없으면 기본값 (2일 전 날짜) 사용
+if len(sys.argv) > 1:
+    basDt = sys.argv[1]  # YYYYMMDD 형식
+else:
+    basDt = (datetime.today() - timedelta(days=2)).strftime('%Y%m%d')
+
+print(f"수집 대상 날짜: {basDt}")
 params = {
     "serviceKey" : service_key,
     # "pageNo": '1',

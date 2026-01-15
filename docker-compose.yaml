@@ -70,7 +70,7 @@ x-airflow-common:
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
     # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option ONLY for a quick checks
     # for other purpose (development, test and especially production usage) build/extend Airflow image.
-    # _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS}
+    _PIP_ADDITIONAL_REQUIREMENTS: 'dbt-trino==1.8.0'
     # The following line can be used to set a custom config file, stored in the local config folder
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
     AIRFLOW__LOGGING__WORKER_LOG_SERVER_HOST: "localhost"
@@ -79,6 +79,7 @@ x-airflow-common:
     - ./airflow/logs:/opt/airflow/logs
     - ./airflow/config:/opt/airflow/config
     - ./airflow/plugins:/opt/airflow/plugins
+    - ./dbt:/opt/dbt
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -167,7 +168,7 @@ services:
       - ./spark:/opt/spark-apps
 
   # -------------------------
-  # Hive Metastore
+  # Hive Metastore DB
   # -------------------------
   hive-metastore-db:
     image: postgres:15
@@ -183,6 +184,9 @@ services:
       interval: 10s
       retries: 5
 
+  # -------------------------
+  # Hive Metastore
+  # -------------------------
   hive-metastore:
     image: apache/hive:4.0.0
     container_name: hive-metastore
@@ -476,7 +480,6 @@ services:
     depends_on:
       <<: *airflow-common-depends-on
 
-  
   # You can enable flower by adding "--profile flower" option e.g. docker-compose --profile flower up
   # or by explicitly targeted on the command line e.g. docker-compose up flower.
   # See: https://docs.docker.com/compose/profiles/

@@ -1,0 +1,29 @@
+name: 'dw_pipeline'
+version: '1.0.0'
+config-version: 2
+
+profile: 'dw_pipeline'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  dw_pipeline:
+    # 스테이징 모델: raw 데이터 정제
+    staging:
+      +materialized: view
+      +schema: staging
+
+    # 마트 모델: 비즈니스 로직 적용
+    mart:
+      +materialized: table
+      +schema: mart

@@ -1,7 +1,13 @@
 FROM apache/spark:3.5.0
 
 USER root
-RUN apt-get update && apt-get install -y python3-pip
-RUN pip3 install requests yfinance pandas
+# Python 패키지 및 빌드 도구 설치
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    libxml2-dev \
+    libxslt-dev \
+    build-essential
+# Alpha Vantage API 사용을 위한 Python 라이브러리 설치
+RUN pip3 install requests pandas
 
 USER 185

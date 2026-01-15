@@ -1,0 +1,47 @@
+version: 2
+
+sources:
+  - name: raw
+    description: "Spark job으로 수집된 원천 데이터"
+    database: hive
+    schema: default
+    tables:
+      - name: krx_stock_raw
+        description: "국내(KRX) 주식 시세 원천 데이터"
+        columns:
+          - name: srtncd
+            description: "단축코드"
+          - name: isincdn
+            description: "ISIN 코드"
+          - name: itmsNm
+            description: "종목명"
+          - name: clpr
+            description: "종가"
+          - name: basDt
+            description: "기준일자"
+
+      - name: foreign_stock_raw
+        description: "해외 주식 시세 원천 데이터"
+        columns:
+          - name: ticker
+            description: "티커"
+          - name: company_name
+            description: "회사명"
+          - name: date
+            description: "거래일자"
+          - name: close
+            description: "종가"
+
+      - name: crypto_raw
+        description: "가상자산 시세 원천 데이터"
+        columns:
+          - name: coin_id
+            description: "코인 ID"
+          - name: symbol
+            description: "심볼"
+          - name: name
+            description: "코인명"
+          - name: current_price_usd
+            description: "현재가 (USD)"
+          - name: date
+            description: "스냅샷 날짜"

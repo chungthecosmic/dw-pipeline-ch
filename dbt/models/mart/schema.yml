@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: mart_stock_daily
+    description: "국내 및 해외 주식 일별 통합 데이터"
+    columns:
+      - name: symbol
+        description: "주식 코드 또는 티커"
+        tests:
+          - not_null
+      - name: trade_date
+        description: "거래일자"
+        tests:
+          - not_null
+      - name: close_price
+        description: "종가"
+        tests:
+          - not_null
+      - name: change_rate
+        description: "등락률 (%)"
+
+  - name: mart_crypto_daily
+    description: "가상자산 일별 시장 데이터"
+    columns:
+      - name: coin_id
+        description: "코인 ID"
+        tests:
+          - not_null
+      - name: snapshot_date
+        description: "스냅샷 날짜"
+        tests:
+          - not_null
+      - name: current_price_usd
+        description: "현재가 (USD)"
+        tests:
+          - not_null
+      - name: market_cap_rank
+        description: "시가총액 순위"
