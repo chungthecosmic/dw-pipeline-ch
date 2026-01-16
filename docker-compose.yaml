@@ -286,7 +286,10 @@ services:
   # ---------- Hive Metastore Service ----------
   # Thrift 프로토콜로 메타데이터 서비스를 제공합니다.
   hive-metastore:
-    image: apache/hive:4.0.0
+    build:
+        context: .
+        dockerfile: Dockerfile.hive    
+    image: apache/hive-custom:4.0.0
     container_name: hive-metastore
     environment:
       DB_DRIVER: postgres
