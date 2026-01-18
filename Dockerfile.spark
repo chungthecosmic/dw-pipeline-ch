@@ -6,8 +6,18 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     libxml2-dev \
     libxslt-dev \
-    build-essential
+    build-essential \
+    curl
+
 # Alpha Vantage API 사용을 위한 Python 라이브러리 설치
 RUN pip3 install requests pandas
+
+# Iceberg 및 AWS 라이브러리 다운로드 (Spark 3.5 호환)
+RUN curl -L https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.5.2/iceberg-spark-runtime-3.5_2.12-1.5.2.jar \
+    -o /opt/spark/jars/iceberg-spark-runtime-3.5_2.12-1.5.2.jar && \
+    curl -L https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar \
+    -o /opt/spark/jars/hadoop-aws-3.3.4.jar && \
+    curl -L https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.367/aws-java-sdk-bundle-1.12.367.jar \
+    -o /opt/spark/jars/aws-java-sdk-bundle-1.12.367.jar
 
 USER 185

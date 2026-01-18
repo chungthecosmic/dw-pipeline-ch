@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+    <!-- S3A FileSystem Implementation -->
+    <property>
+        <name>fs.s3a.impl</name>
+        <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
+    </property>
+
+    <!-- AWS Credentials Provider Chain -->
+    <property>
+        <name>fs.s3a.aws.credentials.provider</name>
+        <value>com.amazonaws.auth.profile.ProfileCredentialsProvider</value>
+    </property>
+
+    <!-- AWS Region (자동 감지되지만 명시 가능) -->
+    <property>
+        <name>fs.s3a.endpoint.region</name>
+        <value>auto</value>
+    </property>
+
+    <!-- Performance Tuning -->
+    <property>
+        <name>fs.s3a.connection.maximum</name>
+        <value>100</value>
+    </property>
+
+    <property>
+        <name>fs.s3a.attempts.maximum</name>
+        <value>10</value>
+    </property>
+
+    <property>
+        <name>fs.s3a.connection.establish.timeout</name>
+        <value>5000</value>
+    </property>
+
+    <property>
+        <name>fs.s3a.connection.timeout</name>
+        <value>200000</value>
+    </property>
+
+    <!-- Fast Upload -->
+    <property>
+        <name>fs.s3a.fast.upload</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>fs.s3a.fast.upload.buffer</name>
+        <value>disk</value>
+    </property>
+
+    <!-- Multipart Upload -->
+    <property>
+        <name>fs.s3a.multipart.size</name>
+        <value>104857600</value> <!-- 100MB -->
+    </property>
+
+    <property>
+        <name>fs.s3a.multipart.threshold</name>
+        <value>209715200</value> <!-- 200MB -->
+    </property>
+</configuration>

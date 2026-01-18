@@ -138,32 +138,12 @@ x-airflow-common:
 
 services:
   # ==============================================================================
-  # [1] 스토리지 Layer - MinIO
+  # [1] 스토리지 Layer - AWS S3
   # ==============================================================================
-  # MinIO는 S3 호환 객체 스토리지입니다.
-  # Hive Metastore와 연동하여 데이터 레이크 스토리지 역할을 합니다.
-  #
-  # 접근 정보:
-  #   - S3 API:  http://localhost:9000
-  #   - Console: http://localhost:9001
-  #   - User:    minio
-  #   - Pass:    minio123
+  # AWS S3를 객체 스토리지로 사용합니다.
+  # 버킷명: dw-pipeline-ch
+  # AWS Profile: dw-pipeline
   # ==============================================================================
-  minio:
-    image: minio/minio
-    container_name: minio
-    # MinIO 서버 시작 명령어
-    # /data: 데이터 저장 경로
-    # --console-address ":9001": 웹 콘솔 포트 지정
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minio          # 관리자 사용자명
-      MINIO_ROOT_PASSWORD: minio123   # 관리자 비밀번호
-    ports:
-      - "9000:9000"  # S3 API 포트
-      - "9001:9001"  # 웹 콘솔 포트
-    volumes:
-      - ./minio:/data  # 로컬 ./minio 디렉토리에 데이터 영구 저장
 
   # ==============================================================================
   # [2] 데이터 처리 Layer - Apache Spark
@@ -197,6 +177,9 @@ services:
       # 데이터 수집에 필요한 API 키들
       - GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=${GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY}
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
+      # AWS 설정
+      - AWS_PROFILE=dw-pipeline
+      - HOME=/home/spark
     ports:
       - "8088:8080"  # Spark Master Web UI (http://localhost:8088)
       - "7077:7077"  # Spark Master 통신 포트 (Airflow SparkSubmitOperator가 이 포트로 연결)
@@ -205,6 +188,8 @@ services:
       # - jobs/: Spark job 스크립트 (.py 파일들)
       # - output/: 수집된 데이터 저장 위치 (Parquet 형식)
       - ./spark:/opt/spark-apps
+      # AWS credentials 마운트 (spark 사용자가 접근 가능하도록)
+      - ~/.aws:/home/spark/.aws:ro
 
   # ---------- Spark Worker 1 ----------
   # 실제 Spark job을 실행하는 워커 노드입니다.
@@ -224,12 +209,15 @@ services:
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
       - SPARK_WORKER_MEMORY=2g     # 워커 메모리 2GB
       - SPARK_WORKER_CORES=1       # 워커 CPU 1코어
+      - AWS_PROFILE=dw-pipeline
+      - HOME=/home/spark
     depends_on:
       - spark-master
     ports:
       - "8089:8081"  # Worker 1 Web UI (http://localhost:8089)
     volumes:
       - ./spark:/opt/spark-apps
+      - ~/.aws:/home/spark/.aws:ro
 
   # ---------- Spark Worker 2 ----------
   # 두 번째 워커 노드 (Worker 1과 동일한 설정)
@@ -248,12 +236,15 @@ services:
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
       - SPARK_WORKER_MEMORY=2g     # 워커 메모리 2GB
       - SPARK_WORKER_CORES=1       # 워커 CPU 1코어
+      - AWS_PROFILE=dw-pipeline
+      - HOME=/home/spark
     depends_on:
       - spark-master
     ports:
       - "8090:8081"  # Worker 2 Web UI (http://localhost:8090)
     volumes:
       - ./spark:/opt/spark-apps
+      - ~/.aws:/home/spark/.aws:ro
 
   # ==============================================================================
   # [3] 메타데이터 카탈로그 Layer - Hive Metastore
@@ -288,7 +279,7 @@ services:
   hive-metastore:
     build:
         context: .
-        dockerfile: Dockerfile.hive    
+        dockerfile: Dockerfile.hive
     image: apache/hive-custom:4.0.0
     container_name: hive-metastore
     environment:
@@ -296,18 +287,16 @@ services:
       SERVICE_NAME: metastore
       # PostgreSQL 연결 정보 (JDBC 옵션)
       SERVICE_OPTS: "-Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-metastore-db:5432/metastore -Djavax.jdo.option.ConnectionUserName=hive -Djavax.jdo.option.ConnectionPassword=hive"
-      # MinIO (S3) 연동 설정
-      AWS_ACCESS_KEY_ID: minio           # MinIO 액세스 키
-      AWS_SECRET_ACCESS_KEY: minio123    # MinIO 시크릿 키
-      S3_ENDPOINT: http://minio:9000     # MinIO 엔드포인트
-      S3_PATH_STYLE_ACCESS: "true"       # Path-style 액세스 활성화 (버킷명이 경로에 포함)
+      # AWS Profile 설정
+      AWS_PROFILE: dw-pipeline
+    volumes:
+      - ./hive/conf/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml     # Hadoop S3 설정 마운트
+      - ~/.aws:/root/.aws:ro  # AWS credentials 마운트 (읽기 전용)
     ports:
       - "9083:9083"  # Thrift 서비스 포트 (Spark/Trino가 이 포트로 연결)
     depends_on:
       hive-metastore-db:
         condition: service_healthy
-      minio:
-        condition: service_started
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "9083"]
       interval: 10s
@@ -327,6 +316,9 @@ services:
   trino:
     image: trinodb/trino:latest
     container_name: trino
+    environment:
+      AWS_PROFILE: dw-pipeline
+      HOME: /home/trino
     ports:
       - "8081:8080"  # Trino Web UI & JDBC 포트 (호스트:8081 → 컨테이너:8080)
     volumes:
@@ -334,6 +326,8 @@ services:
       - ./trino/catalog:/etc/trino/catalog
       # JVM 설정 파일 (힙 메모리 등)
       - ./trino/jvm.config:/etc/trino/jvm.config
+      # AWS credentials 마운트 (trino 사용자가 접근 가능하도록)
+      - ~/.aws:/home/trino/.aws:ro
     depends_on:
       - hive-metastore
 

@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+# Docker compose는 docker-compose가 아닌 docker compose로 입력할 것
+
 ## Communication Language
 **IMPORTANT: Claude must communicate in Korean (한국어) when working with this project.**
 

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="DataSourceManagerImpl" format="xml" multifile-model="true">
+    <data-source source="LOCAL" name="@localhost" uuid="720e1b0e-8b0d-4e28-9dbe-08941b524e8c">
+      <driver-ref>trino</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>io.trino.jdbc.TrinoDriver</jdbc-driver>
+      <jdbc-url>jdbc:trino://localhost:8081</jdbc-url>
+      <working-dir>$ProjectFileDir$</working-dir>
+    </data-source>
+  </component>
+</project>
