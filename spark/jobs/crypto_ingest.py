@@ -31,6 +31,8 @@ print(f"수집 날짜: {current_date} (저장 경로: {target_date})")
 # Spark 세션 생성
 spark = SparkSession.builder \
     .appName("Crypto Price Ingest Job") \
+    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+    .config("spark.hadoop.fs.s3a.aws.credentials.provider", "com.amazonaws.auth.profile.ProfileCredentialsProvider") \
     .getOrCreate()
 
 spark.sparkContext.setLogLevel("ERROR")
@@ -126,8 +128,8 @@ num_rows = df.count()
 total_size_mb = (num_rows * row_size_bytes) / (1024 * 1024)
 num_partitions = max(1, int(total_size_mb / target_size_mb))
 
-# 출력 경로
-output_path = f'/opt/spark-apps/output/crypto/{target_date}'
+# 출력 경로 (S3)
+output_path = f's3a://dw-pipeline-ch/raw/crypto/{target_date}'
 
 print(f"\n데이터 저장 중: {output_path}")
 df.repartition(num_partitions).write.mode("overwrite").parquet(output_path)

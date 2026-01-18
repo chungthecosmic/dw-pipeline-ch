@@ -34,6 +34,8 @@ print(data)
 
 spark = SparkSession.builder \
     .appName("KRX Stocks API Ingest Job") \
+    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+    .config("spark.hadoop.fs.s3a.aws.credentials.provider", "com.amazonaws.auth.profile.ProfileCredentialsProvider") \
     .getOrCreate()
 
 spark.sparkContext.setLogLevel("ERROR")
@@ -50,8 +52,10 @@ row_size_bytes = 1000  # 대략적인 한 행 크기(예상)
 num_rows = df.count()
 total_size_mb = (num_rows * row_size_bytes) / (1024 * 1024)
 num_partitions = max(1, int(total_size_mb / target_size_mb))
-output_path = '/opt/spark-apps/output/krx/' + basDt
+output_path = f's3a://dw-pipeline-ch/raw/krx/{basDt}'
 
+print(f"\n데이터 저장 중: {output_path}")
 df.repartition(num_partitions).write.mode("overwrite").parquet(output_path)
+print(f"저장 완료! (파티션 수: {num_partitions})")
 
 spark.stop()
