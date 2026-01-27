@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-# Docker compose는 docker-compose가 아닌 docker compose로 입력할 것
-
 ## Communication Language
 **IMPORTANT: Claude must communicate in Korean (한국어) when working with this project.**
 
@@ -9,248 +7,217 @@
 - 커밋 메시지: 한국어
 - 설명 및 답변: 한국어
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Docker Command
+**IMPORTANT: docker compose (not docker-compose)**
 
 ## Overview
 
-데이터 웨어하우스 파이프라인 프로젝트(`dw-pipeline-ch`)로, Airflow, Spark, MinIO, Hive Metastore, Trino, dbt를 통합한 ETL/ELT 워크플로우를 제공합니다. 주요 사용 사례는 국내 주식(KRX), 해외 주식(Alpha Vantage), 가상자산(CoinGecko) 시세 데이터를 수집하고 처리하는 분산 데이터 파이프라인입니다.
+데이터 웨어하우스 파이프라인 프로젝트(`dw-pipeline-ch`)로, Airflow, Spark, AWS S3, Hive Metastore, Trino, dbt를 통합한 ETL/ELT 워크플로우를 제공합니다.
+
+주요 데이터 소스:
+- 국내 주식 (KRX API)
+- 해외 주식 (Alpha Vantage API)
+- 가상자산 (CoinGecko API)
 
 ## Architecture
 
-**Orchestration Layer (Airflow)**
-- CeleryExecutor with Redis and PostgreSQL로 워크플로우 오케스트레이션 관리
-- DAG 위치: `airflow/dags/`, 공통 유틸리티: `airflow/dags/common/`
-- Spark 기반 DAG: `airflow/dags/spark_jobs/`
-- Airflow API 서버: port 8080
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Orchestration (Airflow)                     │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Processing (Spark Cluster)                   │
+│                  Master + Worker 1 + Worker 2                   │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Storage (AWS S3)                           │
+│              Bucket: dw-pipeline-ch                             │
+│   ├── raw/krx/YYYYMMDD/          (원시 데이터)                  │
+│   ├── raw/foreign_stock/YYYYMMDD/                               │
+│   ├── raw/crypto/YYYYMMDD/                                      │
+│   └── warehouse/                  (Iceberg 테이블)              │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   Catalog (Hive Metastore)                      │
+│              테이블 스키마 및 메타데이터 관리                    │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Query (Trino + dbt)                        │
+│               SQL 쿼리 및 데이터 변환                           │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-**Processing Layer (Spark)**
-- Spark 클러스터: master 1대 + worker 2대 (각 2GB 메모리, 1 코어)
-- Master UI: port 8088, Worker UI: ports 8089-8090
-- Spark job 위치: `spark/jobs/` → 컨테이너 내 `/opt/spark-apps`로 마운트
-- 커스텀 이미지: `apache/spark:3.5.0` + Python 패키지 (requests, pandas)
+## Project Structure
 
-**Storage & Catalog Layer**
-- **MinIO**: S3 호환 객체 스토리지 (API: port 9000, Console: port 9001)
-- **Hive Metastore**: PostgreSQL 기반 메타데이터 저장소 (port 9083)
-  - Trino와 Spark가 공유하는 테이블 스키마 정보 관리
-  - MinIO(S3) 연동 설정 포함
-- **로컬 볼륨**: Spark 출력 데이터 저장 (`spark/output/`)
-  - 국내주식: `spark/output/krx/YYYYMMDD/`
-  - 해외주식: `spark/output/foreign_stock/YYYYMMDD/`
-  - 가상자산: `spark/output/crypto/YYYYMMDD/`
-
-**Query Layer**
-- **Trino**: 분산 SQL 쿼리 엔진 (port 8081)
-  - Hive Metastore 연동 (`thrift://hive-metastore:9083`)
-  - MinIO S3 연동 설정 (`trino/catalog/hive.properties`)
-- **dbt**: Trino 기반 데이터 변환 도구
-
-**Key Integration Points**
-- Airflow → Spark: `SparkSubmitOperator`로 `spark://spark-master:7077` 연결
-- Spark → Storage: Parquet 파일을 로컬 볼륨에 저장
-- Spark/Trino → Hive Metastore: 테이블 메타데이터 공유
-- Hive Metastore → MinIO: S3 스타일 접근으로 객체 스토리지 연동
+```
+dw-pipeline-ch/
+├── airflow/
+│   ├── config/airflow.cfg
+│   ├── dags/
+│   │   ├── common/              # 공통 유틸리티
+│   │   ├── spark_jobs/          # Spark job DAGs
+│   │   ├── dbt_transform_dag.py
+│   │   └── master_pipeline_dag.py
+│   ├── logs/                    # (gitignore)
+│   └── plugins/
+├── dbt/
+│   ├── models/
+│   │   ├── staging/             # 스테이징 모델
+│   │   └── mart/                # 마트 모델
+│   ├── dbt_project.yml
+│   └── profiles.yml
+├── hive/
+│   └── conf/
+│       ├── core-site.xml        # S3 접근 설정
+│       └── hive-site.xml
+├── spark/
+│   ├── data/                    # 참조 데이터
+│   └── jobs/
+│       ├── krx_api_ingest.py
+│       ├── foreign_stock_ingest.py
+│       ├── crypto_ingest.py
+│       ├── create_iceberg_tables.py
+│       └── load_to_iceberg.py
+├── trino/
+│   ├── catalog/
+│   │   ├── hive.properties
+│   │   └── iceberg.properties
+│   └── jvm.config
+├── docker-compose.yaml
+├── Dockerfile.spark
+├── Dockerfile.hive
+└── .env                         # API 키 (gitignore)
+```
 
 ## Environment Setup
 
-**Prerequisites**
+### Prerequisites
 - Docker and Docker Compose
-- `.env` 파일 생성 (프로젝트 루트):
-  - `AIRFLOW__CORE__FERNET_KEY`
-  - `AIRFLOW__API_AUTH__JWT_SECRET`
-  - `GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY` (KRX API용)
-  - `ALPHA_VANTAGE_API_KEY` (Alpha Vantage API용)
-  - Optional: `AIRFLOW_UID` (default: 50000)
+- AWS CLI configured with profile `dw-pipeline`
+- `.env` 파일:
+  ```
+  AIRFLOW__CORE__FERNET_KEY=<your-fernet-key>
+  AIRFLOW__API_AUTH__JWT_SECRET=<your-jwt-secret>
+  GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=<krx-api-key>
+  ALPHA_VANTAGE_API_KEY=<alpha-vantage-api-key>
+  ```
 
-**Starting Services**
+### AWS Profile Setup
 ```bash
-# 모든 서비스 시작
-docker-compose up -d
+# ~/.aws/credentials
+[dw-pipeline]
+aws_access_key_id = <your-access-key>
+aws_secret_access_key = <your-secret-key>
 
-# Flower 모니터링 포함
-docker-compose --profile flower up -d
+# ~/.aws/config
+[profile dw-pipeline]
+region = ap-northeast-2
+```
+
+### Starting Services
+```bash
+# 전체 서비스 시작
+docker compose up -d
+
+# 특정 서비스만 시작
+docker compose up -d spark-master spark-worker-1 spark-worker-2
+docker compose up -d hive-metastore-db hive-metastore trino
 
 # 로그 확인
-docker-compose logs -f [service-name]
-```
-
-**Accessing Services**
-- Airflow UI: http://localhost:8080 (user: airflow, pass: airflow)
-- Spark Master UI: http://localhost:8088
-- Trino UI: http://localhost:8081
-- MinIO Console: http://localhost:9001 (user: minio, pass: minio123)
-
-**Stopping Services**
-```bash
-docker-compose down
-# 볼륨 정리 포함
-docker-compose down -v
-```
-
-**Airflow 초기 설정**
-```bash
-# Spark 연결 설정
-docker exec -it <airflow-container> airflow connections add 'spark_default' \
-    --conn-type 'spark' \
-    --conn-host 'spark://spark-master' \
-    --conn-port '7077'
-
-# KRX API 키 설정 (Airflow Variable)
-docker exec -it <airflow-container> airflow variables set \
-    GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY "your_api_key_here"
+docker compose logs -f [service-name]
 ```
 
 ## Data Sources
 
 ### 1. 국내 주식 (KRX)
-- **API**: 금융위원회 주식시세정보 API
-- **인증**: 환경변수 `GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY` 필요
-- **수집 주기**: 월~금 18:00 KST (장 마감 후)
-- **데이터 지연**: 1-2일 (API 특성상)
+- **API**: 금융위원회 주식시세정보
+- **인증**: `GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY`
 - **Job**: `spark/jobs/krx_api_ingest.py`
-- **DAG**: `krx_stock_ingest` (airflow/dags/spark_jobs/krx_stock_ingest_dag.py)
+- **스케줄**: 월~금 18:00 KST (장 마감 후)
+- **데이터 지연**: 1-2일
 
 ### 2. 해외 주식 (Alpha Vantage)
-- **API**: Alpha Vantage TIME_SERIES_DAILY API
-- **인증**: 환경변수 `ALPHA_VANTAGE_API_KEY` 필요 (무료 티어 사용 가능)
-- **수집 종목**: 17개 종목
-  - 미국 주요 기술주: AAPL, MSFT, GOOGL, AMZN, META, TSLA, NVDA, AMD, TSM
-  - 보유 주식: DNA, SOFI
-  - 관심 주식: LEU, ONDS, HIMS
-  - 지수 ETF: SPY, QQQ
-  - 기타: NFLX, CRM
-- **수집 주기**: 월~금 09:00 KST (미국 장 마감 후)
-- **Rate Limit**: 무료 티어 - 분당 25회, 하루 500회 (요청 간 2.5초 대기)
+- **API**: TIME_SERIES_DAILY
+- **인증**: `ALPHA_VANTAGE_API_KEY`
 - **Job**: `spark/jobs/foreign_stock_ingest.py`
-- **DAG**: `foreign_stock_ingest` (airflow/dags/spark_jobs/foreign_stock_ingest_dag.py)
+- **종목**: AAPL, MSFT, GOOGL, AMZN, META, TSLA, NVDA, DNA, SOFI, QQQ
+- **Rate Limit**: 분당 25회, 하루 500회 (무료 티어)
 
 ### 3. 가상자산 (CoinGecko)
 - **API**: CoinGecko API v3
-- **인증**: 불필요 (무료, Rate Limit: 분당 10-50회)
-- **수집 코인**: 주요 가상자산 24개 (BTC, ETH, BNB, XRP 등)
-- **수집 주기**: 6시간마다 (00:00, 06:00, 12:00, 18:00 KST)
-- **Rate Limit 대응**: 배치당 6초 대기
+- **인증**: 불필요
 - **Job**: `spark/jobs/crypto_ingest.py`
-- **DAG**: `crypto_ingest` (airflow/dags/spark_jobs/crypto_ingest_dag.py)
+- **코인**: BTC, ETH, BNB, XRP 등 24개
+- **스케줄**: 6시간마다
 
-## DAG Patterns
+## Spark Jobs
 
-**Basic ETL DAG (PythonOperator)**
-Extract → Transform → Load 패턴:
-- `etl_sales_dag.py` - 매출 데이터 파이프라인 (tag: 'sales')
-- `etl_marketing_dag.py` - 마케팅 데이터 파이프라인 (tag: 'marketing')
-- `data_quality_check.py` - 데이터 품질 점검 (tag: 'quality')
-
-**Spark Job Submission DAG**
-`SparkSubmitOperator` 사용 패턴:
-- `krx_stock_ingest` - 국내 주식 수집 (월~금 18:00)
-- `foreign_stock_ingest` - 해외 주식 수집 (월~금 09:00)
-- `crypto_ingest` - 가상자산 수집 (6시간마다)
-
-필수 설정:
-- `conn_id="spark_default"` (Airflow Connections에서 설정)
-- `conf={"spark.master": "spark://spark-master:7077"}`
-- `application="/opt/spark-apps/jobs/[job_file].py"`
-- `driver_memory="1g"`, `executor_memory="2g"`, `executor_cores=1`
-
-**Timezone Handling**
-`pendulum.timezone("Asia/Seoul")`로 KST 타임존 설정
-
-## Spark Job Development
-
-**Job Location**
-`spark/jobs/` 디렉토리에 작성 → 컨테이너 내 `/opt/spark-apps/jobs/`로 마운트
-
-**Common Pattern (3개 job 공통)**
-1. 외부 API에서 데이터 수집
-2. Pandas DataFrame → Spark DataFrame 변환
-3. `collected_at`, `date` 등 메타데이터 컬럼 추가
-4. 동적 파티셔닝 (target: ~128MB per partition)
-5. Parquet 형식으로 저장
-
-**Job Details**
-
-*krx_api_ingest.py*
-- 금융위원회 API 호출 (requests)
-- 날짜 오프셋: `datetime.today() - timedelta(days=2)`
-- 출력: `/opt/spark-apps/output/krx/{YYYYMMDD}/`
-
-*foreign_stock_ingest.py*
-- Alpha Vantage TIME_SERIES_DAILY API 사용 (requests)
-- 티커 리스트: 17개 종목 (AAPL, MSFT, GOOGL, AMZN, META, TSLA, NVDA, AMD, TSM, DNA, SOFI, LEU, ONDS, HIMS, SPY, QQQ, NFLX, CRM)
-- API 응답에서 가장 최근 날짜 데이터 추출 (outputsize=compact, 최근 100개 데이터포인트)
-- Rate Limit 대응: 요청 간 2.5초 대기 (분당 24회로 제한)
-- 출력: `/opt/spark-apps/output/foreign_stock/{YYYYMMDD}/`
-
-*crypto_ingest.py*
-- CoinGecko API v3 (requests)
-- 배치 처리 (10개씩) + Rate Limit 대응 (6초 대기)
-- 시가총액, 거래량, 24시간 변동률 등 수집
-- 출력: `/opt/spark-apps/output/crypto/{YYYYMMDD}/`
-
-**Running Jobs Manually**
+### 수동 실행
 ```bash
-# 국내 주식
-docker exec spark-master /opt/spark/bin/spark-submit \
-  --master spark://spark-master:7077 \
-  /opt/spark-apps/jobs/krx_api_ingest.py
+# 컨테이너 내부에서 실행
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/krx_api_ingest.py [YYYYMMDD]'
 
 # 해외 주식
-docker exec spark-master /opt/spark/bin/spark-submit \
-  --master spark://spark-master:7077 \
-  /opt/spark-apps/jobs/foreign_stock_ingest.py
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/foreign_stock_ingest.py'
 
 # 가상자산
-docker exec spark-master /opt/spark/bin/spark-submit \
-  --master spark://spark-master:7077 \
-  /opt/spark-apps/jobs/crypto_ingest.py
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/crypto_ingest.py'
 ```
 
-**Adding New Dependencies**
-`Dockerfile.spark` 수정 후 이미지 재빌드:
+### Iceberg 테이블 생성 및 로드
 ```bash
-# Dockerfile.spark에 패키지 추가
-RUN pip3 install requests pandas [new-package]
+# 테이블 생성
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/create_iceberg_tables.py'
 
-# 재빌드
-docker-compose build spark-master spark-worker-1 spark-worker-2
-docker-compose up -d
+# 데이터 로드
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/load_to_iceberg.py krx 20260123'
+
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/load_to_iceberg.py foreign_stock 20260127'
+
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/load_to_iceberg.py crypto 20260127'
 ```
 
-## Data Flow
+## Iceberg Tables
 
-1. **Ingestion**: Spark job이 외부 API에서 데이터 수집 (KRX, Alpha Vantage, CoinGecko)
-2. **Storage**: Raw 데이터를 Parquet 형식으로 로컬 볼륨에 저장
-3. **Cataloging**: Hive Metastore가 테이블 스키마 메타데이터 관리
-4. **Querying**: Trino가 Hive Metastore를 통해 데이터에 SQL 인터페이스 제공
-5. **Transformation**: dbt 모델이 비즈니스 로직 적용
-6. **Orchestration**: Airflow가 전체 워크플로우 스케줄링 및 모니터링
+### Catalog Structure
+- **Catalog**: `iceberg` (Spark), `iceberg` (Trino)
+- **Schema**: `stock_data`
+- **Warehouse**: `s3a://dw-pipeline-ch/warehouse`
 
-## Configuration Files
+### Tables
+| 테이블 | 파티션 | 설명 |
+|--------|--------|------|
+| `stock_data.krx_stock_price` | `basDt` | 국내 주식 시세 |
+| `stock_data.foreign_stock_price` | `date` | 해외 주식 시세 |
+| `stock_data.crypto_price` | `date` | 가상자산 시세 |
 
-**Airflow**
-- Custom config: `airflow/config/airflow.cfg`
-- Logs: `airflow/logs/`
-- Plugins: `airflow/plugins/`
+### Spark Iceberg Config
+```python
+spark = SparkSession.builder \
+    .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \
+    .config("spark.sql.catalog.iceberg.type", "hadoop") \
+    .config("spark.sql.catalog.iceberg.warehouse", "s3a://dw-pipeline-ch/warehouse") \
+    .getOrCreate()
+```
 
-**Spark**
-- Dockerfile: `Dockerfile.spark`
-- Jobs: `spark/jobs/*.py`
-- Output: `spark/output/*/YYYYMMDD/`
-
-**Trino**
-- Catalog: `trino/catalog/hive.properties`
-  - Hive Metastore URI: `thrift://hive-metastore:9083`
-  - MinIO S3 설정 포함 (endpoint, credentials, path-style-access)
-- JVM config: `trino/jvm.config` (heap 2GB)
-
-**Hive Metastore**
-- DB: PostgreSQL (hive-metastore-db)
-- Service: Apache Hive 4.0.0 (metastore only)
-- Port: 9083 (Thrift)
-
-**dbt**
-- Project root: `dbt/` (컨테이너 내 `/usr/app`)
+### Trino Iceberg Config
+Trino는 Hive Metastore 카탈로그를 사용합니다 (`trino/catalog/iceberg.properties`).
+**참고**: Spark(Hadoop 카탈로그)와 Trino(Hive Metastore 카탈로그)가 다른 카탈로그를 사용하므로, Trino에서 Iceberg 테이블을 조회하려면 Hive Metastore가 필요합니다.
 
 ## Port Reference
 
@@ -261,50 +228,55 @@ docker-compose up -d
 | Spark Master | 7077 | Job submission |
 | Spark Worker 1 | 8089 | Web UI |
 | Spark Worker 2 | 8090 | Web UI |
-| Trino | 8081 | Web UI & SQL interface |
-| MinIO API | 9000 | S3 API |
-| MinIO Console | 9001 | Web UI |
+| Trino | 8081 | Web UI & SQL |
 | Hive Metastore | 9083 | Thrift service |
 | Flower | 5555 | Celery monitoring (optional) |
 
-## DAG Schedule Summary
+## S3 Bucket Structure
 
-| DAG | 스케줄 | 실행 시간 | 설명 |
-|-----|-------|----------|------|
-| `krx_stock_ingest` | 월~금 | 18:00 KST | 국내 주식 (장 마감 후) |
-| `foreign_stock_ingest` | 월~금 | 09:00 KST | 해외 주식 (미국 장 마감 후) |
-| `crypto_ingest` | 매일 | 00:00, 06:00, 12:00, 18:00 KST | 가상자산 (6시간마다) |
-| `etl_sales` | 매일 | @daily | 매출 데이터 ETL |
-| `etl_marketing` | 매일 | @daily | 마케팅 데이터 ETL |
-| `data_quality_check` | 매일 | @daily | 데이터 품질 점검 |
-
-모든 DAG: `catchup=False` (과거 실행 스킵)
+```
+s3://dw-pipeline-ch/
+├── raw/
+│   ├── krx/YYYYMMDD/           # 국내 주식 원시 데이터 (Parquet)
+│   ├── foreign_stock/YYYYMMDD/ # 해외 주식 원시 데이터 (Parquet)
+│   └── crypto/YYYYMMDD/        # 가상자산 원시 데이터 (Parquet)
+└── warehouse/
+    └── stock_data/             # Iceberg 테이블
+        ├── krx_stock_price/
+        ├── foreign_stock_price/
+        └── crypto_price/
+```
 
 ## Common Issues
 
-**Port Mapping**
-- Airflow: 8080 (Web UI / API)
-- Spark Master: 8088 (Web UI), 7077 (Job submission)
-- Trino: 8081 (Web UI & SQL interface)
-- MinIO: 9000 (API), 9001 (Console)
+### Docker 컨테이너 문제
+```bash
+# 컨테이너 완전 정리
+docker compose down --volumes --remove-orphans
+docker system prune -f
+```
 
-**Data Availability**
-- KRX API: 1-2일 지연 (`timedelta(days=2)` 사용)
-- 해외 주식: Alpha Vantage는 실시간이 아닌 일봉 데이터 (최근 100개 데이터포인트)
-- 가상자산: CoinGecko API Rate Limit 주의 (무료: 분당 10-50회)
+### Spark Submit 에러
+`/opt/spark/work-dir` 관련 에러 발생 시:
+```bash
+# bash -c로 실행
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/<job>.py'
+```
 
-**Volume Permissions**
-- Airflow 볼륨 권한: `chown -R ${AIRFLOW_UID}:0 ./airflow/`
-- Spark 출력 디렉토리 권한 확인 필요
+### KRX API 데이터 없음
+- 주말/공휴일에는 데이터 없음
+- 날짜 파라미터로 평일 지정: `krx_api_ingest.py 20260123`
 
-**Persistent Data Locations**
-- `postgres-db-volume`: Airflow 메타데이터 (Docker volume)
-- `./hive-metastore-db`: Hive Metastore 메타데이터
-- `./minio`: MinIO 객체 스토리지 데이터
-- `./spark/output`: Spark job 출력 (krx, foreign_stock, crypto)
-- `./airflow/logs`: Airflow 실행 로그
+### Trino-Iceberg 연동
+Spark(Hadoop 카탈로그)와 Trino(Hive Metastore 카탈로그) 간 호환성 문제:
+1. Hive Metastore 실행 필요
+2. 또는 Spark에서도 Hive Metastore 카탈로그 사용하도록 변경
 
-**API Limitations**
-- Alpha Vantage: 무료 티어 - 분당 25회, 하루 500회 제한 (요청 간 2.5초 대기로 대응)
-- CoinGecko: 무료 API는 Rate Limit 존재 (배치 처리로 대응)
-- KRX API: 서비스 키 발급 필요, 일일 요청 제한 확인
+## DAG Schedule Summary
+
+| DAG | 스케줄 | 실행 시간 |
+|-----|-------|----------|
+| `krx_stock_ingest` | 월~금 | 18:00 KST |
+| `foreign_stock_ingest` | 월~금 | 09:00 KST |
+| `crypto_ingest` | 매일 | 00:00, 06:00, 12:00, 18:00 KST |

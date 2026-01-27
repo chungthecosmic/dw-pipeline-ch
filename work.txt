@@ -1,3 +1,0 @@
-docker exec spark-master /opt/spark/bin/spark-submit --master spark://spark-master:7077 /opt/spark-apps/jobs/krx_api_ingest.py 20260115
-
-docker exec spark-master /opt/spark/bin/spark-submit --master spark://spark-master:7077 /opt/spark-apps/jobs/create_iceberg_tables.py

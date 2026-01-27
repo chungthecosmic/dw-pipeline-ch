@@ -1,7 +1,38 @@
+# 환경 변수
 .env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
 
 # dbt
 dbt/target/
 dbt/dbt_packages/
 dbt/logs/
+
+# Airflow
+airflow/logs/
+
+# Spark
+spark/output/
+
+# Hive Metastore
 hive-metastore-db/
+
+# Docker volumes
+minio/
+
+# Claude Code
+.claude/
