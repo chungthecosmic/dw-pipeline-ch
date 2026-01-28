@@ -20,7 +20,7 @@
 #   - Hive Metastore: 테이블 메타데이터 카탈로그 (PostgreSQL 백엔드)
 #
 # [쿼리 & 변환 Layer]
-#   - Trino: 분산 SQL 쿼리 엔진
+#   - DuckDB: 경량 분석용 SQL 엔진 (로컬 실행)
 #   - dbt: 데이터 변환 도구
 #
 # [필수 환경변수] (.env 파일에 설정)
@@ -33,8 +33,6 @@
 # [주요 접근 포트]
 #   - Airflow UI:        http://localhost:8080 (user: airflow, pass: airflow)
 #   - Spark Master UI:   http://localhost:8088
-#   - Trino UI:          http://localhost:8081
-#   - MinIO Console:     http://localhost:9001 (user: minio, pass: minio123)
 #   - Flower (optional): http://localhost:5555 (Celery 모니터링)
 #
 # [주의사항]
@@ -305,50 +303,34 @@ services:
       start_period: 30s
 
   # ==============================================================================
-  # [4] 쿼리 엔진 Layer - Trino
+  # [4] 쿼리 엔진 Layer - DuckDB
   # ==============================================================================
-  # Trino는 분산 SQL 쿼리 엔진입니다.
-  # Hive Metastore를 통해 데이터 레이크의 데이터를 SQL로 조회할 수 있습니다.
+  # DuckDB는 경량 분석용 SQL 엔진입니다.
+  # Iceberg 테이블을 직접 읽을 수 있습니다.
   #
-  # 접근: http://localhost:8081
+  # 사용 방법:
+  #   - docker exec -it duckdb python /app/query_iceberg.py
+  #   - docker exec -it duckdb duckdb
   # ==============================================================================
 
-  trino:
-    image: trinodb/trino:latest
-    container_name: trino
+  duckdb:
+    build:
+      context: .
+      dockerfile: Dockerfile.duckdb
+    image: duckdb-custom:latest
+    container_name: duckdb
     environment:
       AWS_PROFILE: dw-pipeline
-      HOME: /home/trino
-    ports:
-      - "8081:8080"  # Trino Web UI & JDBC 포트 (호스트:8081 → 컨테이너:8080)
     volumes:
-      # Trino 카탈로그 설정 파일 (Hive Metastore 연동 설정 포함)
-      - ./trino/catalog:/etc/trino/catalog
-      # JVM 설정 파일 (힙 메모리 등)
-      - ./trino/jvm.config:/etc/trino/jvm.config
-      # AWS credentials 마운트 (trino 사용자가 접근 가능하도록)
-      - ~/.aws:/home/trino/.aws:ro
-    depends_on:
-      - hive-metastore
+      - ./duckdb:/app
+      - ~/.aws:/root/.aws:ro
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    command: ["tail", "-f", "/dev/null"]  # 컨테이너 유지
 
   # ==============================================================================
-  # [5] 데이터 변환 Layer - dbt
-  # ==============================================================================
-  # dbt (data build tool)는 SQL 기반 데이터 변환 도구입니다.
-  # Trino를 백엔드로 사용하여 ELT 파이프라인의 Transform 단계를 담당합니다.
-  # ==============================================================================
-
-  dbt:
-    image: ghcr.io/dbt-labs/dbt-trino:latest
-    container_name: dbt
-    volumes:
-      - ./dbt:/usr/app  # dbt 프로젝트 디렉토리
-    working_dir: /usr/app
-    depends_on:
-      - trino
-
-  # ==============================================================================
-  # [6] 오케스트레이션 Layer - Airflow
+  # [5] 오케스트레이션 Layer - Airflow
   # ==============================================================================
   # Airflow는 워크플로우 오케스트레이션 플랫폼입니다.
   # CeleryExecutor를 사용하여 분산 태스크 실행을 지원합니다.
