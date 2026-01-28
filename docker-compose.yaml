@@ -16,12 +16,10 @@
 #   - PostgreSQL: Airflow 메타데이터 저장소
 #
 # [스토리지 Layer]
-#   - MinIO: S3 호환 객체 스토리지
-#   - Hive Metastore: 테이블 메타데이터 카탈로그 (PostgreSQL 백엔드)
+#   - AWS S3: 객체 스토리지 (버킷: dw-pipeline-ch)
 #
-# [쿼리 & 변환 Layer]
-#   - DuckDB: 경량 분석용 SQL 엔진 (로컬 실행)
-#   - dbt: 데이터 변환 도구
+# [쿼리 Layer]
+#   - DuckDB: 경량 분석용 SQL 엔진 (Iceberg 테이블 직접 조회)
 #
 # [필수 환경변수] (.env 파일에 설정)
 #   - AIRFLOW_UID: Airflow 컨테이너 사용자 ID (기본값: 50000)
@@ -245,65 +243,7 @@ services:
       - ~/.aws:/home/spark/.aws:ro
 
   # ==============================================================================
-  # [3] 메타데이터 카탈로그 Layer - Hive Metastore
-  # ==============================================================================
-  # Hive Metastore는 테이블 메타데이터(스키마, 위치, 파티션 등)를 관리합니다.
-  # Spark와 Trino가 공유하는 중앙 카탈로그 역할을 합니다.
-  #
-  # 아키텍처:
-  #   Spark/Trino → Hive Metastore → PostgreSQL (메타데이터 저장)
-  #                               → MinIO (실제 데이터 저장)
-  # ==============================================================================
-
-  # ---------- Hive Metastore Database ----------
-  # Hive Metastore의 메타데이터를 저장하는 PostgreSQL 데이터베이스
-  hive-metastore-db:
-    image: postgres:15
-    container_name: hive-metastore-db
-    environment:
-      POSTGRES_DB: metastore        # 데이터베이스 이름
-      POSTGRES_USER: hive           # 사용자명
-      POSTGRES_PASSWORD: hive       # 비밀번호
-    volumes:
-      # 메타데이터 영구 저장 (로컬 ./hive-metastore-db 디렉토리)
-      - ./hive-metastore-db:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "hive"]
-      interval: 10s
-      retries: 5
-
-  # ---------- Hive Metastore Service ----------
-  # Thrift 프로토콜로 메타데이터 서비스를 제공합니다.
-  hive-metastore:
-    build:
-        context: .
-        dockerfile: Dockerfile.hive
-    image: apache/hive-custom:4.0.0
-    container_name: hive-metastore
-    environment:
-      DB_DRIVER: postgres
-      SERVICE_NAME: metastore
-      # PostgreSQL 연결 정보 (JDBC 옵션)
-      SERVICE_OPTS: "-Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-metastore-db:5432/metastore -Djavax.jdo.option.ConnectionUserName=hive -Djavax.jdo.option.ConnectionPassword=hive"
-      # AWS Profile 설정
-      AWS_PROFILE: dw-pipeline
-    volumes:
-      - ./hive/conf/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml     # Hadoop S3 설정 마운트
-      - ~/.aws:/root/.aws:ro  # AWS credentials 마운트 (읽기 전용)
-    ports:
-      - "9083:9083"  # Thrift 서비스 포트 (Spark/Trino가 이 포트로 연결)
-    depends_on:
-      hive-metastore-db:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "9083"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-  # ==============================================================================
-  # [4] 쿼리 엔진 Layer - DuckDB
+  # [3] 쿼리 엔진 Layer - DuckDB
   # ==============================================================================
   # DuckDB는 경량 분석용 SQL 엔진입니다.
   # Iceberg 테이블을 직접 읽을 수 있습니다.

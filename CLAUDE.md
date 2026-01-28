@@ -66,11 +66,8 @@ dw-pipeline-ch/
 │   ├── logs/                    # (gitignore)
 │   └── plugins/
 ├── duckdb/
-│   └── query_iceberg.py         # DuckDB Iceberg 조회 스크립트
-├── hive/
-│   └── conf/
-│       ├── core-site.xml        # S3 접근 설정
-│       └── hive-site.xml
+│   ├── query_iceberg.py         # DuckDB Iceberg 조회 스크립트
+│   └── start_harlequin.py       # Harlequin TUI 시작 스크립트
 ├── spark/
 │   ├── data/                    # 참조 데이터
 │   └── jobs/
@@ -81,7 +78,6 @@ dw-pipeline-ch/
 │       └── load_to_iceberg.py
 ├── docker-compose.yaml
 ├── Dockerfile.spark
-├── Dockerfile.hive
 ├── Dockerfile.duckdb
 └── .env                         # API 키 (gitignore)
 ```
@@ -223,6 +219,9 @@ docker exec -it duckdb python /app/query_iceberg.py krx
 docker exec -it duckdb python /app/query_iceberg.py foreign_stock
 docker exec -it duckdb python /app/query_iceberg.py crypto
 
+# Harlequin TUI (터미널 기반 GUI)
+docker exec -it duckdb python /app/start_harlequin.py
+
 # DuckDB CLI 직접 사용
 docker exec -it duckdb duckdb
 ```
@@ -251,7 +250,6 @@ s3://dw-pipeline-ch/
 | Spark Master | 7077 | Job submission |
 | Spark Worker 1 | 8089 | Web UI |
 | Spark Worker 2 | 8090 | Web UI |
-| Hive Metastore | 9083 | Thrift service |
 | Flower | 5555 | Celery monitoring (optional) |
 
 ## DAG Schedule Summary
