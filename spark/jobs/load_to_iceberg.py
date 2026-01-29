@@ -2,7 +2,7 @@
 """
 S3에 저장된 원시 데이터를 Iceberg 테이블에 적재하는 스크립트
 사용법: python load_to_iceberg.py [data_source] [date]
-  - data_source: krx, foreign_stock, crypto
+  - data_source: krx, foreign_stock, crypto, exchange_rate, market_index
   - date: YYYYMMDD 형식 (생략 시 최신 데이터 자동 탐색)
 """
 
@@ -11,16 +11,18 @@ from pyspark.sql import SparkSession
 from datetime import datetime, timedelta
 
 # 파라미터 받기
+VALID_SOURCES = ['krx', 'foreign_stock', 'crypto', 'exchange_rate', 'market_index']
+
 if len(sys.argv) < 2:
     print("사용법: python load_to_iceberg.py [data_source] [date]")
-    print("  - data_source: krx, foreign_stock, crypto")
+    print(f"  - data_source: {', '.join(VALID_SOURCES)}")
     print("  - date: YYYYMMDD 형식 (옵션)")
     sys.exit(1)
 
 data_source = sys.argv[1]
-if data_source not in ['krx', 'foreign_stock', 'crypto']:
+if data_source not in VALID_SOURCES:
     print(f"오류: 잘못된 data_source '{data_source}'")
-    print("가능한 값: krx, foreign_stock, crypto")
+    print(f"가능한 값: {', '.join(VALID_SOURCES)}")
     sys.exit(1)
 
 # 날짜 파라미터 (옵션)
@@ -60,7 +62,9 @@ source_path = f"s3a://dw-pipeline-ch/raw/{data_source}/{target_date}"
 table_mapping = {
     'krx': 'iceberg.stock_data.krx_stock_price',
     'foreign_stock': 'iceberg.stock_data.foreign_stock_price',
-    'crypto': 'iceberg.stock_data.crypto_price'
+    'crypto': 'iceberg.stock_data.crypto_price',
+    'exchange_rate': 'iceberg.stock_data.exchange_rate',
+    'market_index': 'iceberg.stock_data.market_index'
 }
 
 target_table = table_mapping[data_source]
@@ -86,12 +90,14 @@ try:
     print(f"\n[3/3] Iceberg 테이블에 적재 중: {target_table}")
 
     # 데이터 소스별로 파티션 컬럼이 다름
-    if data_source == 'krx':
-        partition_col = 'basDt'
-    elif data_source == 'foreign_stock':
-        partition_col = 'date'
-    else:  # crypto
-        partition_col = 'date'
+    partition_mapping = {
+        'krx': 'basDt',
+        'foreign_stock': 'date',
+        'crypto': 'date',
+        'exchange_rate': 'date',
+        'market_index': 'date'
+    }
+    partition_col = partition_mapping[data_source]
 
     # Iceberg 테이블에 INSERT (append 모드)
     # 같은 날짜 데이터가 있으면 먼저 삭제 후 적재

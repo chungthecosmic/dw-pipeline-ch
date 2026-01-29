@@ -21,6 +21,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 국내 주식 (KRX API)
 - 해외 주식 (Alpha Vantage API)
 - 가상자산 (CoinGecko API)
+- 환율 (ExchangeRate-API)
+- 주식 지수 (Alpha Vantage API)
 
 ## Architecture
 
@@ -74,6 +76,8 @@ dw-pipeline-ch/
 │       ├── krx_api_ingest.py
 │       ├── foreign_stock_ingest.py
 │       ├── crypto_ingest.py
+│       ├── exchange_rate_ingest.py
+│       ├── market_index_ingest.py
 │       ├── create_iceberg_tables.py
 │       └── load_to_iceberg.py
 ├── docker-compose.yaml
@@ -158,6 +162,21 @@ docker compose down -v  # 볼륨 포함
 - **스케줄**: 6시간마다 (00:00, 06:00, 12:00, 18:00 KST)
 - **저장**: `s3a://dw-pipeline-ch/raw/crypto/YYYYMMDD/`
 
+### 4. 환율 (ExchangeRate-API)
+- **API**: ExchangeRate-API Open Access
+- **인증**: 불필요
+- **Job**: `spark/jobs/exchange_rate_ingest.py`
+- **기준 통화**: KRW (원화)
+- **대상 통화**: USD, EUR, JPY, CNY, GBP, CHF, AUD
+- **저장**: `s3a://dw-pipeline-ch/raw/exchange_rate/YYYYMMDD/`
+
+### 5. 주식 지수 (Alpha Vantage)
+- **API**: TIME_SERIES_DAILY (ETF 기반)
+- **인증**: `ALPHA_VANTAGE_API_KEY`
+- **Job**: `spark/jobs/market_index_ingest.py`
+- **지수**: S&P 500 (SPY), 다우존스 (DIA), 나스닥 100 (QQQ)
+- **저장**: `s3a://dw-pipeline-ch/raw/market_index/YYYYMMDD/`
+
 ## Spark Jobs
 
 ### 수동 실행
@@ -173,6 +192,14 @@ docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
 # 가상자산
 docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
   '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/crypto_ingest.py'
+
+# 환율
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/exchange_rate_ingest.py'
+
+# 주식 지수
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/market_index_ingest.py'
 ```
 
 ### Iceberg 테이블 생성 및 로드
@@ -181,7 +208,7 @@ docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
 docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
   '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/create_iceberg_tables.py'
 
-# 데이터 로드 (data_source: krx, foreign_stock, crypto)
+# 데이터 로드 (data_source: krx, foreign_stock, crypto, exchange_rate, market_index)
 docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
   '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/load_to_iceberg.py <data_source> <YYYYMMDD>'
 ```
@@ -199,6 +226,8 @@ docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
 | `iceberg.stock_data.krx_stock_price` | `basDt` | 국내 주식 시세 |
 | `iceberg.stock_data.foreign_stock_price` | `date` | 해외 주식 시세 |
 | `iceberg.stock_data.crypto_price` | `date` | 가상자산 시세 |
+| `iceberg.stock_data.exchange_rate` | `date` | KRW 기준 환율 |
+| `iceberg.stock_data.market_index` | `date` | 미국 주식 지수 |
 
 ### Spark Iceberg Config
 ```python
@@ -218,6 +247,8 @@ docker exec -it duckdb python /app/query_iceberg.py
 docker exec -it duckdb python /app/query_iceberg.py krx
 docker exec -it duckdb python /app/query_iceberg.py foreign_stock
 docker exec -it duckdb python /app/query_iceberg.py crypto
+docker exec -it duckdb python /app/query_iceberg.py exchange_rate
+docker exec -it duckdb python /app/query_iceberg.py market_index
 
 # Harlequin TUI (터미널 기반 GUI)
 docker exec -it duckdb python /app/start_harlequin.py
@@ -233,12 +264,16 @@ s3://dw-pipeline-ch/
 ├── raw/
 │   ├── krx/YYYYMMDD/           # 국내 주식 원시 데이터 (Parquet)
 │   ├── foreign_stock/YYYYMMDD/ # 해외 주식 원시 데이터 (Parquet)
-│   └── crypto/YYYYMMDD/        # 가상자산 원시 데이터 (Parquet)
+│   ├── crypto/YYYYMMDD/        # 가상자산 원시 데이터 (Parquet)
+│   ├── exchange_rate/YYYYMMDD/ # 환율 원시 데이터 (Parquet)
+│   └── market_index/YYYYMMDD/  # 주식 지수 원시 데이터 (Parquet)
 └── warehouse/
     └── stock_data/             # Iceberg 테이블
         ├── krx_stock_price/
         ├── foreign_stock_price/
-        └── crypto_price/
+        ├── crypto_price/
+        ├── exchange_rate/
+        └── market_index/
 ```
 
 ## Port Reference

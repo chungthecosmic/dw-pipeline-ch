@@ -25,12 +25,12 @@ print("Iceberg 테이블 생성 시작")
 print("="*80)
 
 # 1. 스키마 생성
-print("\n[1/4] Iceberg 스키마 생성 중...")
+print("\n[1/6] Iceberg 스키마 생성 중...")
 spark.sql("CREATE SCHEMA IF NOT EXISTS iceberg.stock_data")
 print("✓ 스키마 생성 완료: iceberg.stock_data")
 
 # 2. 국내 주식 (KRX) Iceberg 테이블 생성
-print("\n[2/4] KRX 주식 테이블 생성 중...")
+print("\n[2/6] KRX 주식 테이블 생성 중...")
 spark.sql("""
 CREATE TABLE IF NOT EXISTS iceberg.stock_data.krx_stock_price (
     basDt STRING COMMENT '기준일자',
@@ -59,7 +59,7 @@ TBLPROPERTIES (
 print("✓ KRX 주식 테이블 생성 완료")
 
 # 3. 해외 주식 Iceberg 테이블 생성
-print("\n[3/4] 해외 주식 테이블 생성 중...")
+print("\n[3/6] 해외 주식 테이블 생성 중...")
 spark.sql("""
 CREATE TABLE IF NOT EXISTS iceberg.stock_data.foreign_stock_price (
     ticker STRING COMMENT '티커 심볼',
@@ -84,7 +84,7 @@ TBLPROPERTIES (
 print("✓ 해외 주식 테이블 생성 완료")
 
 # 4. 가상자산 Iceberg 테이블 생성
-print("\n[4/4] 가상자산 테이블 생성 중...")
+print("\n[4/6] 가상자산 테이블 생성 중...")
 spark.sql("""
 CREATE TABLE IF NOT EXISTS iceberg.stock_data.crypto_price (
     coin_id STRING COMMENT '코인 ID',
@@ -114,6 +114,59 @@ TBLPROPERTIES (
 )
 """)
 print("✓ 가상자산 테이블 생성 완료")
+
+# 5. 환율 Iceberg 테이블 생성
+print("\n[5/6] 환율 테이블 생성 중...")
+spark.sql("""
+CREATE TABLE IF NOT EXISTS iceberg.stock_data.exchange_rate (
+    currency_code STRING COMMENT '통화 코드',
+    currency_name STRING COMMENT '통화명',
+    country STRING COMMENT '국가',
+    base_currency STRING COMMENT '기준 통화',
+    rate DOUBLE COMMENT '환율 (1 외화 = X KRW)',
+    inverse_rate DOUBLE COMMENT '역환율 (1 KRW = X 외화)',
+    date STRING COMMENT '날짜',
+    api_update_time STRING COMMENT 'API 업데이트 시간',
+    collected_at TIMESTAMP COMMENT '수집 시간'
+)
+USING iceberg
+PARTITIONED BY (date)
+TBLPROPERTIES (
+    'format-version' = '2',
+    'write.parquet.compression-codec' = 'snappy'
+)
+""")
+print("✓ 환율 테이블 생성 완료")
+
+# 6. 주식 지수 Iceberg 테이블 생성
+print("\n[6/6] 주식 지수 테이블 생성 중...")
+spark.sql("""
+CREATE TABLE IF NOT EXISTS iceberg.stock_data.market_index (
+    ticker STRING COMMENT '티커 (ETF)',
+    index_name STRING COMMENT '지수명',
+    index_symbol STRING COMMENT '지수 심볼',
+    description STRING COMMENT '설명',
+    exchange STRING COMMENT '거래소',
+    date STRING COMMENT '날짜',
+    open DOUBLE COMMENT '시가',
+    high DOUBLE COMMENT '고가',
+    low DOUBLE COMMENT '저가',
+    close DOUBLE COMMENT '종가',
+    volume BIGINT COMMENT '거래량',
+    prev_close DOUBLE COMMENT '전일 종가',
+    change DOUBLE COMMENT '변동',
+    change_percent DOUBLE COMMENT '변동률 (%)',
+    currency STRING COMMENT '통화',
+    collected_at TIMESTAMP COMMENT '수집 시간'
+)
+USING iceberg
+PARTITIONED BY (date)
+TBLPROPERTIES (
+    'format-version' = '2',
+    'write.parquet.compression-codec' = 'snappy'
+)
+""")
+print("✓ 주식 지수 테이블 생성 완료")
 
 # 생성된 테이블 확인
 print("\n" + "="*80)

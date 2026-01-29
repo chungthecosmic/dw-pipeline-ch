@@ -7,6 +7,8 @@ DuckDB를 사용한 Iceberg 테이블 조회 스크립트
     python query_iceberg.py krx                # KRX 데이터만 조회
     python query_iceberg.py foreign_stock      # 해외 주식만 조회
     python query_iceberg.py crypto             # 가상자산만 조회
+    python query_iceberg.py exchange_rate      # 환율만 조회
+    python query_iceberg.py market_index       # 주식 지수만 조회
 """
 
 import sys
@@ -100,6 +102,50 @@ def query_crypto(conn):
         print(f"조회 실패: {e}")
 
 
+def query_exchange_rate(conn):
+    """환율 데이터 조회"""
+    print("\n" + "="*70)
+    print("환율 데이터 (KRW 기준)")
+    print("="*70)
+
+    try:
+        result = conn.execute("""
+            SELECT currency_code, currency_name, country,
+                   ROUND(rate, 2) as rate_krw,
+                   date
+            FROM iceberg_scan('s3://dw-pipeline-ch/warehouse/stock_data/exchange_rate')
+            ORDER BY date DESC, rate_krw DESC
+            LIMIT 20
+        """).fetchdf()
+        print(result.to_string(index=False))
+        print(f"\n총 {len(result)}건 조회됨")
+    except Exception as e:
+        print(f"조회 실패: {e}")
+
+
+def query_market_index(conn):
+    """주식 지수 데이터 조회"""
+    print("\n" + "="*70)
+    print("주식 지수 데이터")
+    print("="*70)
+
+    try:
+        result = conn.execute("""
+            SELECT index_name, ticker, date,
+                   ROUND(close, 2) as close,
+                   ROUND(change, 2) as change,
+                   ROUND(change_percent, 2) as change_pct,
+                   volume
+            FROM iceberg_scan('s3://dw-pipeline-ch/warehouse/stock_data/market_index')
+            ORDER BY date DESC, index_name
+            LIMIT 20
+        """).fetchdf()
+        print(result.to_string(index=False))
+        print(f"\n총 {len(result)}건 조회됨")
+    except Exception as e:
+        print(f"조회 실패: {e}")
+
+
 def main():
     conn = setup_duckdb()
 
@@ -112,14 +158,20 @@ def main():
             query_foreign_stock(conn)
         elif table == 'crypto':
             query_crypto(conn)
+        elif table == 'exchange_rate':
+            query_exchange_rate(conn)
+        elif table == 'market_index':
+            query_market_index(conn)
         else:
             print(f"알 수 없는 테이블: {table}")
-            print("사용 가능한 테이블: krx, foreign_stock, crypto")
+            print("사용 가능한 테이블: krx, foreign_stock, crypto, exchange_rate, market_index")
     else:
         # 전체 조회
         query_krx(conn)
         query_foreign_stock(conn)
         query_crypto(conn)
+        query_exchange_rate(conn)
+        query_market_index(conn)
 
     conn.close()
 
