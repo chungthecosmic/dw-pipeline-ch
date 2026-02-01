@@ -294,6 +294,8 @@ s3://dw-pipeline-ch/
 | `krx_stock_ingest` | 월~금 | 18:00 KST |
 | `foreign_stock_ingest` | 월~금 | 09:00 KST |
 | `crypto_ingest` | 매일 | 00:00, 06:00, 12:00, 18:00 KST |
+| `exchange_rate_ingest` | 매일 | 09:00 KST |
+| `market_index_ingest` | 월~금 | 09:00 KST |
 
 모든 DAG: `catchup=False` (과거 실행 스킵)
 
