@@ -1,28 +1,127 @@
 # CLAUDE.md
 
-# Docker compose는 docker-compose가 아닌 docker compose로 입력할 것
-
-# 중간에 git commit을 적절히 섞어줄 것
-
-## Communication Language
-**IMPORTANT: Claude must communicate in Korean (한국어) when working with this project.**
-
-- 작업 보고서: 한국어
-- 커밋 메시지: 한국어
-- 설명 및 답변: 한국어
-
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Claude Instructions
+
+**Communication Language**: 한국어 (Korean)
+- 작업 보고서, 커밋 메시지, 설명 및 답변 모두 한국어로 작성
+
+**Commands**:
+- Docker Compose: `docker compose` (not `docker-compose`)
+- 작업 중간에 적절히 git commit 수행
+
+---
 
 ## Overview
 
-데이터 웨어하우스 파이프라인 프로젝트(`dw-pipeline-ch`)로, Airflow, Spark, AWS S3, DuckDB를 통합한 ETL/ELT 워크플로우를 제공합니다.
+데이터 웨어하우스 파이프라인 프로젝트로, Airflow, Spark, AWS S3, DuckDB를 통합한 ETL/ELT 워크플로우를 제공합니다.
 
-주요 데이터 소스:
-- 국내 주식 (KRX API)
-- 해외 주식 (Alpha Vantage API)
-- 가상자산 (CoinGecko API)
-- 환율 (ExchangeRate-API)
-- 주식 지수 (Alpha Vantage API)
+### 데이터 소스
+| 소스 | API | 인증 |
+|-----|-----|-----|
+| 국내 주식 | 금융위원회 KRX API | API 키 필요 |
+| 해외 주식 | Alpha Vantage | API 키 필요 |
+| 가상자산 | CoinGecko | 불필요 |
+| 환율 | ExchangeRate-API | 불필요 |
+| 주식 지수 | Alpha Vantage (ETF) | API 키 필요 |
+
+---
+
+## Quick Start
+
+### 1. 서비스 시작
+```bash
+# Spark 클러스터 시작
+docker compose up -d spark-master spark-worker-1 spark-worker-2
+
+# DuckDB 시작
+docker compose up -d duckdb
+
+# 전체 서비스 (Airflow 포함)
+docker compose up -d
+```
+
+### 2. 데이터 수집 (Spark Job)
+```bash
+# 국내 주식
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/krx_api_ingest.py [YYYYMMDD]'
+
+# 해외 주식
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/foreign_stock_ingest.py [YYYYMMDD]'
+
+# 가상자산
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/crypto_ingest.py [YYYYMMDD]'
+
+# 환율
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/exchange_rate_ingest.py [YYYYMMDD]'
+
+# 주식 지수
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/market_index_ingest.py [YYYYMMDD]'
+```
+
+### 3. Iceberg 테이블 적재
+```bash
+# 테이블 생성 (최초 1회)
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/create_iceberg_tables.py'
+
+# 데이터 적재 (data_source: krx, foreign_stock, crypto, exchange_rate, market_index)
+docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
+  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/load_to_iceberg.py <data_source> <YYYYMMDD>'
+```
+
+### 4. 데이터 조회 (DuckDB)
+```bash
+# 전체 테이블 조회
+docker exec duckdb python /app/query_iceberg.py
+
+# 특정 테이블만 조회
+docker exec duckdb python /app/query_iceberg.py krx
+docker exec duckdb python /app/query_iceberg.py foreign_stock
+docker exec duckdb python /app/query_iceberg.py crypto
+docker exec duckdb python /app/query_iceberg.py exchange_rate
+docker exec duckdb python /app/query_iceberg.py market_index
+```
+
+---
+
+## DuckDB 사용법
+
+### Harlequin TUI (SQL 에디터)
+터미널 기반 GUI SQL 에디터로, 인터랙티브하게 쿼리 작성 및 실행 가능:
+```bash
+docker exec -it duckdb python /app/start_harlequin.py
+```
+
+**Harlequin 단축키:**
+- `Ctrl+Enter`: 쿼리 실행
+- `Ctrl+O`: 파일 열기
+- `Ctrl+S`: 쿼리 저장
+- `F1`: 도움말
+
+### DuckDB CLI
+직접 SQL 명령어 입력:
+```bash
+docker exec -it duckdb duckdb
+```
+
+### Iceberg 테이블 직접 조회
+```sql
+-- S3의 Iceberg 테이블 조회
+SELECT * FROM iceberg_scan('s3://dw-pipeline-ch/warehouse/stock_data/krx_stock_price');
+SELECT * FROM iceberg_scan('s3://dw-pipeline-ch/warehouse/stock_data/foreign_stock_price');
+SELECT * FROM iceberg_scan('s3://dw-pipeline-ch/warehouse/stock_data/crypto_price');
+SELECT * FROM iceberg_scan('s3://dw-pipeline-ch/warehouse/stock_data/exchange_rate');
+SELECT * FROM iceberg_scan('s3://dw-pipeline-ch/warehouse/stock_data/market_index');
+```
+
+---
 
 ## Architecture
 
@@ -42,18 +141,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Storage (AWS S3)                           │
 │              Bucket: dw-pipeline-ch                             │
-│   ├── raw/krx/YYYYMMDD/          (원시 데이터 - Parquet)        │
-│   ├── raw/foreign_stock/YYYYMMDD/                               │
-│   ├── raw/crypto/YYYYMMDD/                                      │
-│   └── warehouse/stock_data/      (Iceberg 테이블)               │
+│   ├── raw/                      (원시 데이터 - Parquet)         │
+│   └── warehouse/stock_data/     (Iceberg 테이블)                │
 └─────────────────────────────────────────────────────────────────┘
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      Query (DuckDB)                             │
+│                      Query (DuckDB + Harlequin)                 │
 │              경량 분석용 SQL 엔진 + Iceberg 지원                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+---
 
 ## Project Structure
 
@@ -62,44 +161,51 @@ dw-pipeline-ch/
 ├── airflow/
 │   ├── config/airflow.cfg
 │   ├── dags/
-│   │   ├── common/              # 공통 유틸리티
-│   │   ├── spark_jobs/          # Spark job DAGs
-│   │   └── master_pipeline_dag.py
-│   ├── logs/                    # (gitignore)
+│   │   ├── common/                    # 공통 유틸리티
+│   │   └── spark_jobs/                # Spark job DAGs
+│   │       ├── krx_stock_ingest_dag.py
+│   │       ├── foreign_stock_ingest_dag.py
+│   │       ├── crypto_ingest_dag.py
+│   │       ├── exchange_rate_ingest_dag.py
+│   │       └── market_index_ingest_dag.py
+│   ├── logs/                          # (gitignore)
 │   └── plugins/
 ├── duckdb/
-│   ├── query_iceberg.py         # DuckDB Iceberg 조회 스크립트
-│   └── start_harlequin.py       # Harlequin TUI 시작 스크립트
+│   ├── query_iceberg.py               # Iceberg 테이블 조회 스크립트
+│   └── start_harlequin.py             # Harlequin TUI 시작 스크립트
 ├── spark/
-│   ├── data/                    # 참조 데이터
+│   ├── data/                          # 참조 데이터
 │   └── jobs/
-│       ├── krx_api_ingest.py
-│       ├── foreign_stock_ingest.py
-│       ├── crypto_ingest.py
-│       ├── exchange_rate_ingest.py
-│       ├── market_index_ingest.py
-│       ├── create_iceberg_tables.py
-│       └── load_to_iceberg.py
+│       ├── krx_api_ingest.py          # 국내 주식 수집
+│       ├── foreign_stock_ingest.py    # 해외 주식 수집
+│       ├── crypto_ingest.py           # 가상자산 수집
+│       ├── exchange_rate_ingest.py    # 환율 수집
+│       ├── market_index_ingest.py     # 주식 지수 수집
+│       ├── create_iceberg_tables.py   # Iceberg 테이블 생성
+│       └── load_to_iceberg.py         # Iceberg 테이블 적재
 ├── docker-compose.yaml
 ├── Dockerfile.spark
 ├── Dockerfile.duckdb
-└── .env                         # API 키 (gitignore)
+└── .env                               # API 키 (gitignore)
 ```
+
+---
 
 ## Environment Setup
 
-**Prerequisites**
+### Prerequisites
 - Docker and Docker Compose
 - AWS CLI configured with profile `dw-pipeline`
-- `.env` 파일:
-  ```
-  AIRFLOW__CORE__FERNET_KEY=<your-fernet-key>
-  AIRFLOW__API_AUTH__JWT_SECRET=<your-jwt-secret>
-  GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=<krx-api-key>
-  ALPHA_VANTAGE_API_KEY=<alpha-vantage-api-key>
-  ```
 
-**AWS Profile Setup**
+### .env 파일
+```
+AIRFLOW__CORE__FERNET_KEY=<your-fernet-key>
+AIRFLOW__API_AUTH__JWT_SECRET=<your-jwt-secret>
+GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY=<krx-api-key>
+ALPHA_VANTAGE_API_KEY=<alpha-vantage-api-key>
+```
+
+### AWS Profile
 ```bash
 # ~/.aws/credentials
 [dw-pipeline]
@@ -111,53 +217,28 @@ aws_secret_access_key = <your-secret-key>
 region = ap-northeast-2
 ```
 
-**Starting Services**
-```bash
-# 전체 서비스 시작
-docker compose up -d
+---
 
-# 특정 서비스만 시작
-docker compose up -d spark-master spark-worker-1 spark-worker-2
-docker compose up -d duckdb
-
-# Flower 모니터링 포함
-docker compose --profile flower up -d
-
-# 로그 확인
-docker compose logs -f [service-name]
-
-# 서비스 중지
-docker compose down
-docker compose down -v  # 볼륨 포함
-```
-
-**Accessing Services**
-- Airflow UI: http://localhost:8080 (user: airflow, pass: airflow)
-- Spark Master UI: http://localhost:8088
-- Flower: http://localhost:5555 (optional)
-
-## Data Sources
+## Data Sources Detail
 
 ### 1. 국내 주식 (KRX)
 - **API**: 금융위원회 주식시세정보 API
 - **인증**: `GOV_OPEN_API_STOCK_PRICE_SERVICE_KEY`
-- **Job**: `spark/jobs/krx_api_ingest.py`
-- **스케줄**: 월~금 18:00 KST (장 마감 후)
+- **스케줄**: 월~금 18:00 KST
 - **데이터 지연**: 1-2일 (API 특성상)
 - **저장**: `s3a://dw-pipeline-ch/raw/krx/YYYYMMDD/`
 
 ### 2. 해외 주식 (Alpha Vantage)
 - **API**: TIME_SERIES_DAILY
 - **인증**: `ALPHA_VANTAGE_API_KEY`
-- **Job**: `spark/jobs/foreign_stock_ingest.py`
 - **종목**: AAPL, MSFT, GOOGL, AMZN, META, TSLA, NVDA, DNA, SOFI, QQQ
 - **Rate Limit**: 분당 25회, 하루 500회 (무료 티어)
+- **스케줄**: 월~금 09:00 KST
 - **저장**: `s3a://dw-pipeline-ch/raw/foreign_stock/YYYYMMDD/`
 
 ### 3. 가상자산 (CoinGecko)
 - **API**: CoinGecko API v3
 - **인증**: 불필요
-- **Job**: `spark/jobs/crypto_ingest.py`
 - **코인**: BTC, ETH, BNB, XRP 등 24개
 - **스케줄**: 6시간마다 (00:00, 06:00, 12:00, 18:00 KST)
 - **저장**: `s3a://dw-pipeline-ch/raw/crypto/YYYYMMDD/`
@@ -165,53 +246,19 @@ docker compose down -v  # 볼륨 포함
 ### 4. 환율 (ExchangeRate-API)
 - **API**: ExchangeRate-API Open Access
 - **인증**: 불필요
-- **Job**: `spark/jobs/exchange_rate_ingest.py`
 - **기준 통화**: KRW (원화)
 - **대상 통화**: USD, EUR, JPY, CNY, GBP, CHF, AUD
+- **스케줄**: 매일 09:00 KST
 - **저장**: `s3a://dw-pipeline-ch/raw/exchange_rate/YYYYMMDD/`
 
 ### 5. 주식 지수 (Alpha Vantage)
 - **API**: TIME_SERIES_DAILY (ETF 기반)
 - **인증**: `ALPHA_VANTAGE_API_KEY`
-- **Job**: `spark/jobs/market_index_ingest.py`
 - **지수**: S&P 500 (SPY), 다우존스 (DIA), 나스닥 100 (QQQ)
+- **스케줄**: 월~금 09:00 KST
 - **저장**: `s3a://dw-pipeline-ch/raw/market_index/YYYYMMDD/`
 
-## Spark Jobs
-
-### 수동 실행
-```bash
-# 국내 주식 (날짜 파라미터 옵션)
-docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
-  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/krx_api_ingest.py [YYYYMMDD]'
-
-# 해외 주식
-docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
-  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/foreign_stock_ingest.py'
-
-# 가상자산
-docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
-  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/crypto_ingest.py'
-
-# 환율
-docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
-  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/exchange_rate_ingest.py'
-
-# 주식 지수
-docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
-  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/market_index_ingest.py'
-```
-
-### Iceberg 테이블 생성 및 로드
-```bash
-# 테이블 생성
-docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
-  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/create_iceberg_tables.py'
-
-# 데이터 로드 (data_source: krx, foreign_stock, crypto, exchange_rate, market_index)
-docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
-  '/opt/spark/bin/spark-submit --master "local[*]" /opt/spark-apps/jobs/load_to_iceberg.py <data_source> <YYYYMMDD>'
-```
+---
 
 ## Iceberg Tables
 
@@ -229,44 +276,18 @@ docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
 | `iceberg.stock_data.exchange_rate` | `date` | KRW 기준 환율 |
 | `iceberg.stock_data.market_index` | `date` | 미국 주식 지수 |
 
-### Spark Iceberg Config
-```python
-spark = SparkSession.builder \
-    .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \
-    .config("spark.sql.catalog.iceberg.type", "hadoop") \
-    .config("spark.sql.catalog.iceberg.warehouse", "s3a://dw-pipeline-ch/warehouse") \
-    .getOrCreate()
-```
-
-### DuckDB Iceberg 조회
-```bash
-# 전체 테이블 조회
-docker exec -it duckdb python /app/query_iceberg.py
-
-# 특정 테이블만 조회
-docker exec -it duckdb python /app/query_iceberg.py krx
-docker exec -it duckdb python /app/query_iceberg.py foreign_stock
-docker exec -it duckdb python /app/query_iceberg.py crypto
-docker exec -it duckdb python /app/query_iceberg.py exchange_rate
-docker exec -it duckdb python /app/query_iceberg.py market_index
-
-# Harlequin TUI (터미널 기반 GUI)
-docker exec -it duckdb python /app/start_harlequin.py
-
-# DuckDB CLI 직접 사용
-docker exec -it duckdb duckdb
-```
+---
 
 ## S3 Bucket Structure
 
 ```
 s3://dw-pipeline-ch/
 ├── raw/
-│   ├── krx/YYYYMMDD/           # 국내 주식 원시 데이터 (Parquet)
-│   ├── foreign_stock/YYYYMMDD/ # 해외 주식 원시 데이터 (Parquet)
-│   ├── crypto/YYYYMMDD/        # 가상자산 원시 데이터 (Parquet)
-│   ├── exchange_rate/YYYYMMDD/ # 환율 원시 데이터 (Parquet)
-│   └── market_index/YYYYMMDD/  # 주식 지수 원시 데이터 (Parquet)
+│   ├── krx/YYYYMMDD/           # 국내 주식 (Parquet)
+│   ├── foreign_stock/YYYYMMDD/ # 해외 주식 (Parquet)
+│   ├── crypto/YYYYMMDD/        # 가상자산 (Parquet)
+│   ├── exchange_rate/YYYYMMDD/ # 환율 (Parquet)
+│   └── market_index/YYYYMMDD/  # 주식 지수 (Parquet)
 └── warehouse/
     └── stock_data/             # Iceberg 테이블
         ├── krx_stock_price/
@@ -275,6 +296,22 @@ s3://dw-pipeline-ch/
         ├── exchange_rate/
         └── market_index/
 ```
+
+---
+
+## Airflow DAG Schedule
+
+| DAG | 스케줄 | 실행 시간 |
+|-----|-------|----------|
+| `krx_stock_ingest` | 월~금 | 18:00 KST |
+| `foreign_stock_ingest` | 월~금 | 09:00 KST |
+| `crypto_ingest` | 매일 | 00:00, 06:00, 12:00, 18:00 KST |
+| `exchange_rate_ingest` | 매일 | 09:00 KST |
+| `market_index_ingest` | 월~금 | 09:00 KST |
+
+모든 DAG: `catchup=False` (과거 실행 스킵)
+
+---
 
 ## Port Reference
 
@@ -287,19 +324,9 @@ s3://dw-pipeline-ch/
 | Spark Worker 2 | 8090 | Web UI |
 | Flower | 5555 | Celery monitoring (optional) |
 
-## DAG Schedule Summary
+---
 
-| DAG | 스케줄 | 실행 시간 |
-|-----|-------|----------|
-| `krx_stock_ingest` | 월~금 | 18:00 KST |
-| `foreign_stock_ingest` | 월~금 | 09:00 KST |
-| `crypto_ingest` | 매일 | 00:00, 06:00, 12:00, 18:00 KST |
-| `exchange_rate_ingest` | 매일 | 09:00 KST |
-| `market_index_ingest` | 월~금 | 09:00 KST |
-
-모든 DAG: `catchup=False` (과거 실행 스킵)
-
-## Common Issues
+## Troubleshooting
 
 ### Docker 컨테이너 문제
 ```bash
@@ -318,8 +345,6 @@ docker exec -e HOME=/home/spark -w /opt/spark spark-master bash -c \
 - 주말/공휴일에는 데이터 없음
 - 날짜 파라미터로 평일 지정: `krx_api_ingest.py 20260123`
 
-### DuckDB Iceberg 조회
-DuckDB의 `iceberg_scan()` 함수로 S3의 Iceberg 테이블 직접 조회 가능:
-```sql
-SELECT * FROM iceberg_scan('s3://dw-pipeline-ch/warehouse/stock_data/krx_stock_price');
-```
+### Alpha Vantage Rate Limit
+- 분당 25회, 하루 500회 제한
+- 해외 주식과 주식 지수 수집 시 2.5초 간격 자동 대기
