@@ -91,6 +91,38 @@ docker exec duckdb python /app/query_iceberg.py market_index
 
 ---
 
+## Web App (데이터 카탈로그)
+
+테이블 스키마 및 데이터를 조회할 수 있는 웹 애플리케이션입니다.
+
+### 서비스 시작
+```bash
+docker compose up -d webapp-backend webapp-frontend
+```
+
+### 접속
+- **Frontend**: http://localhost:5173
+- **Backend API**: http://localhost:8000
+
+### 기능
+- 테이블 목록 및 메타데이터 조회
+- 테이블 스키마 확인
+- 테이블 통계 (레코드 수, 파티션 수, 날짜 범위)
+- 샘플 데이터 미리보기
+- SQL 쿼리 실행 (SELECT만 허용)
+
+### API 엔드포인트
+| 엔드포인트 | 설명 |
+|-----------|------|
+| GET /api/tables | 테이블 목록 |
+| GET /api/tables/{id} | 테이블 정보 |
+| GET /api/tables/{id}/schema | 테이블 스키마 |
+| GET /api/tables/{id}/stats | 테이블 통계 |
+| GET /api/tables/{id}/data | 테이블 데이터 |
+| POST /api/tables/query | SQL 쿼리 실행 |
+
+---
+
 ## DuckDB 사용법
 
 ### Harlequin TUI (SQL 에디터)
@@ -183,6 +215,21 @@ dw-pipeline-ch/
 │       ├── market_index_ingest.py     # 주식 지수 수집
 │       ├── create_iceberg_tables.py   # Iceberg 테이블 생성
 │       └── load_to_iceberg.py         # Iceberg 테이블 적재
+├── webapp/
+│   ├── backend/                       # FastAPI 백엔드
+│   │   ├── app/
+│   │   │   ├── main.py
+│   │   │   ├── database.py
+│   │   │   └── routers/tables.py
+│   │   ├── requirements.txt
+│   │   └── Dockerfile
+│   └── frontend/                      # React + TypeScript 프론트엔드
+│       ├── src/
+│       │   ├── App.tsx
+│       │   ├── api/tables.ts
+│       │   └── types/index.ts
+│       ├── package.json
+│       └── Dockerfile
 ├── docker-compose.yaml
 ├── Dockerfile.spark
 ├── Dockerfile.duckdb
@@ -323,6 +370,8 @@ s3://dw-pipeline-ch/
 | Spark Worker 1 | 8089 | Web UI |
 | Spark Worker 2 | 8090 | Web UI |
 | Flower | 5555 | Celery monitoring (optional) |
+| Webapp Frontend | 5173 | React Web UI |
+| Webapp Backend | 8000 | FastAPI REST API |
 
 ---
 

@@ -270,6 +270,56 @@ services:
     command: ["tail", "-f", "/dev/null"]  # 컨테이너 유지
 
   # ==============================================================================
+  # [4] 데이터 카탈로그 - React + FastAPI Web App
+  # ==============================================================================
+  # Iceberg 테이블 스키마 및 데이터 조회를 위한 웹 애플리케이션
+  #
+  # 아키텍처:
+  #   - Frontend: React + TypeScript (Vite)
+  #   - Backend: FastAPI + DuckDB
+  #
+  # 기능:
+  #   - 테이블 목록 및 스키마 조회
+  #   - 샘플 데이터 미리보기
+  #   - SQL 쿼리 실행
+  #
+  # 접근:
+  #   - Frontend: http://localhost:5173
+  #   - Backend API: http://localhost:8000
+  # ==============================================================================
+
+  # ---------- Backend (FastAPI) ----------
+  webapp-backend:
+    build:
+      context: ./webapp/backend
+      dockerfile: Dockerfile
+    image: dw-webapp-backend:latest
+    container_name: webapp-backend
+    environment:
+      AWS_PROFILE: dw-pipeline
+    ports:
+      - "8000:8000"  # FastAPI (http://localhost:8000)
+    volumes:
+      - ./webapp/backend/app:/app/app
+      - ~/.aws:/root/.aws:ro
+    restart: unless-stopped
+
+  # ---------- Frontend (React + Vite) ----------
+  webapp-frontend:
+    build:
+      context: ./webapp/frontend
+      dockerfile: Dockerfile
+    image: dw-webapp-frontend:latest
+    container_name: webapp-frontend
+    ports:
+      - "5173:5173"  # Vite dev server (http://localhost:5173)
+    volumes:
+      - ./webapp/frontend/src:/app/src
+    depends_on:
+      - webapp-backend
+    restart: unless-stopped
+
+  # ==============================================================================
   # [5] 오케스트레이션 Layer - Airflow
   # ==============================================================================
   # Airflow는 워크플로우 오케스트레이션 플랫폼입니다.
