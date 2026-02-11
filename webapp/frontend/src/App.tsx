@@ -4,6 +4,14 @@ import type { TableInfo, TableSchema, TableStats, TableData, QueryResult } from 
 
 type TabType = 'info' | 'schema' | 'data' | 'query';
 
+const TABLE_ICONS: Record<string, string> = {
+  krx_stock_price: '🇰🇷',
+  foreign_stock_price: '🌍',
+  crypto_price: '₿',
+  exchange_rate: '💱',
+  market_index: '📈',
+};
+
 function App() {
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [selectedTable, setSelectedTable] = useState<TableInfo | null>(null);
@@ -13,8 +21,8 @@ function App() {
   const [data, setData] = useState<TableData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
 
-  // SQL Query state
   const [sql, setSql] = useState('');
   const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
   const [queryLoading, setQueryLoading] = useState(false);
@@ -38,8 +46,10 @@ function App() {
         setSelectedTable(data[0]);
       }
     } catch (err) {
-      setError('테이블 목록을 불러오는데 실패했습니다.');
+      setError('테이블 목록을 불러오는데 실패했습니다. 백엔드 서버를 확인하세요.');
       console.error(err);
+    } finally {
+      setInitialLoading(false);
     }
   }
 
@@ -85,230 +95,293 @@ function App() {
   }
 
   function formatValue(value: unknown): string {
-    if (value === null || value === undefined) return '-';
+    if (value === null || value === undefined) return '—';
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
   }
 
+  if (initialLoading) {
+    return (
+      <div className="app">
+        <div className="loading" style={{ height: '100vh' }}>
+          <div className="spinner"></div>
+          <p>데이터 카탈로그 로딩 중...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="container">
+    <div className="app">
       <header className="header">
-        <h1>DW Pipeline 데이터 카탈로그</h1>
-        <p>Iceberg 테이블 스키마 및 데이터 조회</p>
+        <div className="header-content">
+          <div className="logo">
+            <div className="logo-icon">📊</div>
+            <h1>DW Pipeline 데이터 카탈로그</h1>
+          </div>
+          <div className="header-badge">Iceberg + DuckDB</div>
+        </div>
       </header>
 
-      <div className="main-content">
+      <main className="main-container">
         <aside className="sidebar">
-          <h2>테이블 목록</h2>
-          <ul className="table-list">
-            {tables.map((table) => (
-              <li
-                key={table.id}
-                className={`table-item ${selectedTable?.id === table.id ? 'active' : ''}`}
-                onClick={() => setSelectedTable(table)}
-              >
-                <h3>{table.name}</h3>
-                <p>{table.id}</p>
-              </li>
-            ))}
-          </ul>
+          <div className="sidebar-card">
+            <div className="sidebar-header">
+              <h2>테이블 목록</h2>
+            </div>
+            <ul className="table-list">
+              {tables.map((table) => (
+                <li
+                  key={table.id}
+                  className={`table-item ${selectedTable?.id === table.id ? 'active' : ''}`}
+                  onClick={() => setSelectedTable(table)}
+                >
+                  <h3>{TABLE_ICONS[table.id] || '📁'} {table.name}</h3>
+                  <p>{table.id}</p>
+                  <span className="source-badge">{table.source.split(' ')[0]}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
         </aside>
 
-        <main className="content-area">
-          {selectedTable ? (
-            <>
-              <div className="tabs">
-                <button
-                  className={`tab ${activeTab === 'info' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('info')}
-                >
-                  정보
-                </button>
-                <button
-                  className={`tab ${activeTab === 'schema' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('schema')}
-                >
-                  스키마
-                </button>
-                <button
-                  className={`tab ${activeTab === 'data' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('data')}
-                >
-                  데이터
-                </button>
-                <button
-                  className={`tab ${activeTab === 'query' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('query')}
-                >
-                  SQL 쿼리
-                </button>
-              </div>
-
-              {error && <div className="error">{error}</div>}
-
-              {activeTab === 'info' && (
-                <div>
-                  <div className="info-card">
-                    <h3>{selectedTable.name}</h3>
-                    <p>{selectedTable.description}</p>
-                    <p>
-                      <span className="badge">파티션: {selectedTable.partition}</span>
-                      <span className="badge">소스: {selectedTable.source}</span>
-                    </p>
-                  </div>
-
-                  {loading ? (
-                    <div className="loading">로딩 중...</div>
-                  ) : stats && (
-                    <div className="stats-grid">
-                      <div className="stat-card">
-                        <div className="value">{stats.record_count.toLocaleString()}</div>
-                        <div className="label">총 레코드 수</div>
-                      </div>
-                      <div className="stat-card">
-                        <div className="value">{stats.partition_count.toLocaleString()}</div>
-                        <div className="label">파티션 수</div>
-                      </div>
-                      <div className="stat-card">
-                        <div className="value">{stats.min_date || '-'}</div>
-                        <div className="label">최소 날짜</div>
-                      </div>
-                      <div className="stat-card">
-                        <div className="value">{stats.max_date || '-'}</div>
-                        <div className="label">최대 날짜</div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {activeTab === 'schema' && (
-                <div>
-                  {loading ? (
-                    <div className="loading">로딩 중...</div>
-                  ) : (
-                    <table className="schema-table">
-                      <thead>
-                        <tr>
-                          <th>컬럼명</th>
-                          <th>데이터 타입</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {schema.map((col, idx) => (
-                          <tr key={idx}>
-                            <td>{col.column_name}</td>
-                            <td><span className="data-type">{col.data_type}</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              )}
-
-              {activeTab === 'data' && (
-                <div>
-                  {loading ? (
-                    <div className="loading">로딩 중...</div>
-                  ) : data ? (
-                    <>
-                      <p style={{ marginBottom: '15px', color: '#666' }}>
-                        {data.row_count}개 행 표시
-                      </p>
-                      <div className="data-table-wrapper">
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              {data.columns.map((col, idx) => (
-                                <th key={idx}>{col}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {data.rows.map((row, rowIdx) => (
-                              <tr key={rowIdx}>
-                                {row.map((cell, cellIdx) => (
-                                  <td key={cellIdx}>{formatValue(cell)}</td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="empty-state">
-                      <h3>데이터 없음</h3>
-                      <p>테이블에 데이터가 없습니다.</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {activeTab === 'query' && (
-                <div>
-                  <p style={{ marginBottom: '10px', color: '#666', fontSize: '0.9rem' }}>
-                    SELECT 쿼리만 실행 가능합니다. iceberg_scan() 함수를 사용하세요.
-                  </p>
-                  <textarea
-                    className="sql-editor"
-                    value={sql}
-                    onChange={(e) => setSql(e.target.value)}
-                    placeholder={`예시:\nSELECT * FROM iceberg_scan('s3://dw-pipeline-ch/warehouse/stock_data/${selectedTable.id}') LIMIT 10`}
-                  />
+        <section className="content">
+          <div className="content-card">
+            {selectedTable ? (
+              <>
+                <div className="tabs">
                   <button
-                    className="btn btn-primary"
-                    onClick={handleQueryExecute}
-                    disabled={queryLoading || !sql.trim()}
+                    className={`tab ${activeTab === 'info' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('info')}
                   >
-                    {queryLoading ? '실행 중...' : '쿼리 실행'}
+                    📋 정보
                   </button>
+                  <button
+                    className={`tab ${activeTab === 'schema' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('schema')}
+                  >
+                    🏗️ 스키마
+                  </button>
+                  <button
+                    className={`tab ${activeTab === 'data' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('data')}
+                  >
+                    📄 데이터
+                  </button>
+                  <button
+                    className={`tab ${activeTab === 'query' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('query')}
+                  >
+                    ⚡ SQL 쿼리
+                  </button>
+                </div>
 
-                  {queryError && (
-                    <div className="error" style={{ marginTop: '15px' }}>
-                      {queryError}
+                <div className="tab-content">
+                  {error && <div className="error">⚠️ {error}</div>}
+
+                  {activeTab === 'info' && (
+                    <div>
+                      <div className="info-section">
+                        <div className="info-header">
+                          <div className="info-icon">
+                            {TABLE_ICONS[selectedTable.id] || '📁'}
+                          </div>
+                          <div className="info-details">
+                            <h3>{selectedTable.name}</h3>
+                            <p>{selectedTable.description}</p>
+                            <div className="info-badges">
+                              <span className="badge badge-primary">
+                                🔑 파티션: {selectedTable.partition}
+                              </span>
+                              <span className="badge badge-secondary">
+                                📡 {selectedTable.source}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {loading ? (
+                        <div className="loading">
+                          <div className="spinner"></div>
+                          <p>통계 로딩 중...</p>
+                        </div>
+                      ) : stats && (
+                        <div className="stats-grid">
+                          <div className="stat-card">
+                            <div className="icon">📊</div>
+                            <div className="value">{stats.record_count.toLocaleString()}</div>
+                            <div className="label">총 레코드 수</div>
+                          </div>
+                          <div className="stat-card">
+                            <div className="icon">📁</div>
+                            <div className="value">{stats.partition_count.toLocaleString()}</div>
+                            <div className="label">파티션 수</div>
+                          </div>
+                          <div className="stat-card">
+                            <div className="icon">📅</div>
+                            <div className="value">{stats.min_date || '—'}</div>
+                            <div className="label">시작일</div>
+                          </div>
+                          <div className="stat-card">
+                            <div className="icon">📅</div>
+                            <div className="value">{stats.max_date || '—'}</div>
+                            <div className="label">종료일</div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  {queryResult && (
-                    <div style={{ marginTop: '20px' }}>
-                      <p style={{ marginBottom: '10px', color: '#666' }}>
-                        결과: {queryResult.row_count}개 행
-                      </p>
-                      <div className="data-table-wrapper">
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              {queryResult.columns.map((col, idx) => (
-                                <th key={idx}>{col}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {queryResult.rows.map((row, rowIdx) => (
-                              <tr key={rowIdx}>
-                                {row.map((cell, cellIdx) => (
-                                  <td key={cellIdx}>{formatValue(cell)}</td>
-                                ))}
+                  {activeTab === 'schema' && (
+                    <div>
+                      {loading ? (
+                        <div className="loading">
+                          <div className="spinner"></div>
+                          <p>스키마 로딩 중...</p>
+                        </div>
+                      ) : (
+                        <div className="table-wrapper">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>#</th>
+                                <th>컬럼명</th>
+                                <th>데이터 타입</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {schema.map((col, idx) => (
+                                <tr key={idx}>
+                                  <td style={{ color: 'var(--gray-500)' }}>{idx + 1}</td>
+                                  <td><strong>{col.column_name}</strong></td>
+                                  <td><span className="data-type">{col.data_type}</span></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {activeTab === 'data' && (
+                    <div>
+                      {loading ? (
+                        <div className="loading">
+                          <div className="spinner"></div>
+                          <p>데이터 로딩 중...</p>
+                        </div>
+                      ) : data && data.rows.length > 0 ? (
+                        <>
+                          <div className="results-header">
+                            <span className="count">✅ {data.row_count}개 행 로드됨</span>
+                          </div>
+                          <div className="table-wrapper">
+                            <div className="scroll-container">
+                              <table className="data-table">
+                                <thead>
+                                  <tr>
+                                    {data.columns.map((col, idx) => (
+                                      <th key={idx}>{col}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {data.rows.map((row, rowIdx) => (
+                                    <tr key={rowIdx}>
+                                      {row.map((cell, cellIdx) => (
+                                        <td key={cellIdx}>{formatValue(cell)}</td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="empty-state">
+                          <div className="icon">📭</div>
+                          <h3>데이터 없음</h3>
+                          <p>테이블에 데이터가 없습니다.</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {activeTab === 'query' && (
+                    <div className="sql-section">
+                      <div className="sql-hint">
+                        💡 SELECT 쿼리만 실행 가능합니다. iceberg_scan() 함수를 사용하세요.
                       </div>
+                      <textarea
+                        className="sql-editor"
+                        value={sql}
+                        onChange={(e) => setSql(e.target.value)}
+                        placeholder={`SELECT * \nFROM iceberg_scan('s3://dw-pipeline-ch/warehouse/stock_data/${selectedTable.id}') \nLIMIT 10`}
+                      />
+                      <div>
+                        <button
+                          className="btn btn-primary"
+                          onClick={handleQueryExecute}
+                          disabled={queryLoading || !sql.trim()}
+                        >
+                          {queryLoading ? (
+                            <>⏳ 실행 중...</>
+                          ) : (
+                            <>▶️ 쿼리 실행</>
+                          )}
+                        </button>
+                      </div>
+
+                      {queryError && (
+                        <div className="error">⚠️ {queryError}</div>
+                      )}
+
+                      {queryResult && (
+                        <div style={{ marginTop: '24px' }}>
+                          <div className="results-header">
+                            <span className="count">✅ 결과: {queryResult.row_count}개 행</span>
+                          </div>
+                          <div className="table-wrapper">
+                            <div className="scroll-container">
+                              <table className="data-table">
+                                <thead>
+                                  <tr>
+                                    {queryResult.columns.map((col, idx) => (
+                                      <th key={idx}>{col}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {queryResult.rows.map((row, rowIdx) => (
+                                    <tr key={rowIdx}>
+                                      {row.map((cell, cellIdx) => (
+                                        <td key={cellIdx}>{formatValue(cell)}</td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )}
-            </>
-          ) : (
-            <div className="empty-state">
-              <h3>테이블을 선택하세요</h3>
-              <p>왼쪽 목록에서 테이블을 선택하면 상세 정보를 확인할 수 있습니다.</p>
-            </div>
-          )}
-        </main>
-      </div>
+              </>
+            ) : (
+              <div className="empty-state">
+                <div className="icon">👈</div>
+                <h3>테이블을 선택하세요</h3>
+                <p>왼쪽 목록에서 테이블을 선택하면 상세 정보를 확인할 수 있습니다.</p>
+              </div>
+            )}
+          </div>
+        </section>
+      </main>
     </div>
   );
 }
